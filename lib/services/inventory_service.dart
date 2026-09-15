@@ -1,52 +1,21 @@
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/inventory_item.dart';
 
 /// Servicio encargado de administrar el inventario de herramientas e
-/// insumos. Se comporta como un "microservicio" interno de la app: toda
-/// la lógica de negocio (crear, actualizar, eliminar, consultar) vive
-/// aquí, separada de las vistas. Las pantallas solo consumen esta clase.
-///
-/// Al extender [ChangeNotifier], cualquier widget puede escucharlo con
-/// un [ListenableBuilder] y reconstruirse automáticamente cuando los
-/// datos cambian, sin necesidad de paquetes externos de manejo de estado.
+/// insumos, respaldado por la tabla `inventario` de Supabase. Cada
+/// usuario solo ve sus propias filas gracias a las políticas de
+/// seguridad (RLS) definidas en `schema.sql`.
 class InventoryService extends ChangeNotifier {
-  final List<InventoryItem> _items = [
-    InventoryItem(
-      id: '1',
-      nombre: 'Pala de jardín',
-      categoria: ItemCategoria.herramienta,
-      cantidad: 3,
-      unidad: 'unidades',
-      stockMinimo: 1,
-    ),
-    InventoryItem(
-      id: '2',
-      nombre: 'Tijeras de podar',
-      categoria: ItemCategoria.herramienta,
-      cantidad: 2,
-      unidad: 'unidades',
-      stockMinimo: 1,
-    ),
-    InventoryItem(
-      id: '3',
-      nombre: 'Fertilizante orgánico',
-      categoria: ItemCategoria.insumo,
-      cantidad: 4,
-      unidad: 'kg',
-      stockMinimo: 2,
-    ),
-    InventoryItem(
-      id: '4',
-      nombre: 'Semillas de lechuga',
-      categoria: ItemCategoria.insumo,
-      cantidad: 1,
-      unidad: 'bolsas',
-      stockMinimo: 2,
-    ),
-  ];
+  final SupabaseClient _client = Supabase.instance.client;
+  static const String _tabla = 'inventario';
 
-  /// Lista de solo lectura de todos los artículos.
+  List<InventoryItem> _items = [];
+  bool cargando = false;
+
+  /// Lista de solo lectura de todos los artículos (en memoria, ya
+  /// sincronizados con Supabase).
   List<InventoryItem> get items => List.unmodifiable(_items);
 
   /// Artículos filtrados por categoría.
@@ -56,37 +25,135 @@ class InventoryService extends ChangeNotifier {
   /// Cantidad de artículos que están en o por debajo del stock mínimo.
   int get totalBajoStock => _items.where((i) => i.bajoStock).length;
 
-  /// Agrega un nuevo artículo al inventario.
-  void agregarItem(InventoryItem item) {
-    _items.add(item);
+  /// Descarga el inventario del usuario autenticado. Se llama al
+  /// iniciar sesión (ver `AuthGate` en main.dart).
+  Future<void> cargar() async {
+    cargando = true;
+    notifyListeners();
+    try {
+      final data = await _client.from(_tabla).select();
+      _items = (data as List)
+          .map((fila) => InventoryItem.fromMap(fila as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('Error cargando inventario: $e');
+    } finally {
+      cargando = false;
+      notifyListeners();
+    }
+  }
+
+  /// Vacía los datos en memoria. Se llama al cerrar sesión para que la
+  /// siguiente cuenta que inicie sesión en este dispositivo no vea
+  /// datos de la cuenta anterior.
+  void limpiar() {
+    _items = [];
     notifyListeners();
   }
 
-  /// Reemplaza un artículo existente (identificado por [id]) con los
-  /// nuevos datos de [actualizado].
-  void actualizarItem(String id, InventoryItem actualizado) {
-    final index = _items.indexWhere((item) => item.id == id);
-    if (index != -1) {
-      _items[index] = actualizado;
+  /// Agrega un nuevo artículo. El id y el dueño (user_id) los asigna
+  /// Supabase automáticamente.
+  Future<void> agregarItem({
+    required String nombre,
+    required ItemCategoria categoria,
+    required double cantidad,
+    required String unidad,
+    double stockMinimo = 0,
+    String notas = '',
+  }) async {
+    try {
+      final fila = await _client
+          .from(_tabla)
+          .insert({
+            'nombre': nombre,
+            'categoria': categoria.name,
+            'cantidad': cantidad,
+            'unidad': unidad,
+            'stock_minimo': stockMinimo,
+            'notas': notas,
+            'actualizado_en': DateTime.now().toIso8601String(),
+          })
+          .select()
+          .single();
+      _items.add(InventoryItem.fromMap(fila));
       notifyListeners();
+    } catch (e) {
+      debugPrint('Error agregando artículo: $e');
+      rethrow;
+    }
+  }
+
+  /// Actualiza un artículo existente.
+  Future<void> actualizarItem(
+    String id, {
+    required String nombre,
+    required ItemCategoria categoria,
+    required double cantidad,
+    required String unidad,
+    double stockMinimo = 0,
+    String notas = '',
+  }) async {
+    try {
+      await _client.from(_tabla).update({
+        'nombre': nombre,
+        'categoria': categoria.name,
+        'cantidad': cantidad,
+        'unidad': unidad,
+        'stock_minimo': stockMinimo,
+        'notas': notas,
+        'actualizado_en': DateTime.now().toIso8601String(),
+      }).eq('id', id);
+
+      final index = _items.indexWhere((item) => item.id == id);
+      if (index != -1) {
+        _items[index] = _items[index].copyWith(
+          nombre: nombre,
+          categoria: categoria,
+          cantidad: cantidad,
+          unidad: unidad,
+          stockMinimo: stockMinimo,
+          notas: notas,
+        );
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error actualizando artículo: $e');
+      rethrow;
     }
   }
 
   /// Ajusta la cantidad disponible de un artículo (positivo para sumar,
   /// negativo para restar), sin bajar de cero.
-  void ajustarCantidad(String id, double delta) {
+  Future<void> ajustarCantidad(String id, double delta) async {
     final index = _items.indexWhere((item) => item.id == id);
-    if (index != -1) {
-      final actual = _items[index];
-      final nuevaCantidad = (actual.cantidad + delta).clamp(0, double.infinity);
-      _items[index] = actual.copyWith(cantidad: nuevaCantidad.toDouble());
+    if (index == -1) return;
+
+    final nuevaCantidad =
+        (_items[index].cantidad + delta).clamp(0, double.infinity).toDouble();
+
+    try {
+      await _client.from(_tabla).update({
+        'cantidad': nuevaCantidad,
+        'actualizado_en': DateTime.now().toIso8601String(),
+      }).eq('id', id);
+
+      _items[index] = _items[index].copyWith(cantidad: nuevaCantidad);
       notifyListeners();
+    } catch (e) {
+      debugPrint('Error ajustando cantidad: $e');
+      rethrow;
     }
   }
 
   /// Elimina un artículo del inventario.
-  void eliminarItem(String id) {
-    _items.removeWhere((item) => item.id == id);
-    notifyListeners();
+  Future<void> eliminarItem(String id) async {
+    try {
+      await _client.from(_tabla).delete().eq('id', id);
+      _items.removeWhere((item) => item.id == id);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error eliminando artículo: $e');
+      rethrow;
+    }
   }
 }

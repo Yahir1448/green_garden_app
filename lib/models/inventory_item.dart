@@ -66,8 +66,8 @@ class InventoryItem {
     );
   }
 
-  /// Utilidad para (de)serializar, útil si más adelante se agrega
-  /// persistencia local (ej. shared_preferences, sqlite, un backend, etc).
+  /// Convierte el artículo a un mapa con las mismas columnas (snake_case)
+  /// que la tabla `inventario` en Supabase.
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -75,9 +75,9 @@ class InventoryItem {
       'categoria': categoria.name,
       'cantidad': cantidad,
       'unidad': unidad,
-      'stockMinimo': stockMinimo,
+      'stock_minimo': stockMinimo,
       'notas': notas,
-      'ultimaActualizacion': ultimaActualizacion.toIso8601String(),
+      'actualizado_en': ultimaActualizacion.toIso8601String(),
     };
   }
 
@@ -91,10 +91,10 @@ class InventoryItem {
       ),
       cantidad: (map['cantidad'] as num).toDouble(),
       unidad: map['unidad'] as String,
-      stockMinimo: (map['stockMinimo'] as num?)?.toDouble() ?? 0,
+      stockMinimo: (map['stock_minimo'] as num?)?.toDouble() ?? 0,
       notas: map['notas'] as String? ?? '',
       ultimaActualizacion: DateTime.tryParse(
-            map['ultimaActualizacion'] as String? ?? '',
+            map['actualizado_en'] as String? ?? '',
           ) ??
           DateTime.now(),
     );

@@ -1,14 +1,33 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'screens/auth_screen.dart';
 import 'screens/customer_screen.dart';
+import 'screens/finance_screen.dart';
 import 'screens/inventory_screen.dart';
+import 'screens/services_screen.dart';
 import 'services/customer_service.dart';
+import 'services/finance_service.dart';
 import 'services/inventory_service.dart';
+import 'services/service_catalog_service.dart';
+import 'supabase/supabase_config.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 import 'widgets/theme_toggle_button.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Conecta la app con tu proyecto de Supabase. Rellena las
+  // credenciales en lib/supabase/supabase_config.dart antes de correr
+  // la app.
+  await Supabase.initialize(
+    url: SupabaseConfig.supabaseUrl,
+    anonKey: SupabaseConfig.supabaseAnonKey,
+  );
+
   runApp(const MyApp());
 }
 
@@ -16,10 +35,9 @@ void main() {
 ///
 /// Aquí es donde se instancian los servicios (la capa que en esta
 /// arquitectura funciona como microservicios internos: inventario,
-/// clientes, y a futuro otros módulos). El tema claro/oscuro ya no vive
-/// en este widget: se maneja de forma global en [ThemeController], para
-/// que cualquier pantalla lo pueda leer o cambiar sin recibirlo como
-/// parámetro.
+/// clientes, finanzas, catálogo de servicios, y a futuro otros
+/// módulos), respaldados por Supabase. El tema claro/oscuro no vive en
+/// este widget: se maneja de forma global en [ThemeController].
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -32,6 +50,8 @@ class _MyAppState extends State<MyApp> {
   // una sola vez aquí y se pasan hacia las pantallas que las necesiten.
   final InventoryService _inventoryService = InventoryService();
   final CustomerService _customerService = CustomerService();
+  final FinanceService _financeService = FinanceService();
+  final ServiceCatalogService _serviceCatalogService = ServiceCatalogService();
 
   @override
   Widget build(BuildContext context) {
@@ -44,12 +64,116 @@ class _MyAppState extends State<MyApp> {
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
           themeMode: themeMode,
-          home: HomePage(
+          // AuthGate decide si mostrar el login o el dashboard según
+          // haya o no una sesión activa de Supabase, y se encarga de
+          // cargar/limpiar los datos de cada servicio en el momento
+          // correcto.
+          home: AuthGate(
             inventoryService: _inventoryService,
             customerService: _customerService,
+            financeService: _financeService,
+            serviceCatalogService: _serviceCatalogService,
           ),
         );
       },
+    );
+  }
+}
+
+/// Escucha los cambios de sesión de Supabase Auth y muestra la
+/// pantalla de login o el dashboard principal según corresponda.
+///
+/// También es responsable de:
+/// - Descargar los datos de todos los módulos justo después de iniciar
+///   sesión (`cargar()` en cada servicio).
+/// - Vaciar los datos en memoria al cerrar sesión (`limpiar()`), para
+///   que si otra persona inicia sesión con otra cuenta en el mismo
+///   teléfono, no vea ningún dato de la cuenta anterior.
+class AuthGate extends StatefulWidget {
+  final InventoryService inventoryService;
+  final CustomerService customerService;
+  final FinanceService financeService;
+  final ServiceCatalogService serviceCatalogService;
+
+  const AuthGate({
+    super.key,
+    required this.inventoryService,
+    required this.customerService,
+    required this.financeService,
+    required this.serviceCatalogService,
+  });
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  late final StreamSubscription<AuthState> _authSub;
+  bool _autenticado = false;
+  bool _cargandoInicial = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final sesionActual = Supabase.instance.client.auth.currentSession;
+    _autenticado = sesionActual != null;
+    if (_autenticado) {
+      _cargarTodo();
+    }
+
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      final haySesion = data.session != null;
+      if (haySesion && !_autenticado) {
+        _cargarTodo();
+      } else if (!haySesion && _autenticado) {
+        _limpiarTodo();
+      }
+      if (mounted) setState(() => _autenticado = haySesion);
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub.cancel();
+    super.dispose();
+  }
+
+  Future<void> _cargarTodo() async {
+    setState(() => _cargandoInicial = true);
+    await Future.wait([
+      widget.inventoryService.cargar(),
+      widget.customerService.cargar(),
+      widget.financeService.cargar(),
+      widget.serviceCatalogService.cargar(),
+    ]);
+    if (mounted) setState(() => _cargandoInicial = false);
+  }
+
+  void _limpiarTodo() {
+    widget.inventoryService.limpiar();
+    widget.customerService.limpiar();
+    widget.financeService.limpiar();
+    widget.serviceCatalogService.limpiar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_autenticado) {
+      return const AuthScreen();
+    }
+
+    if (_cargandoInicial) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return HomePage(
+      inventoryService: widget.inventoryService,
+      customerService: widget.customerService,
+      financeService: widget.financeService,
+      serviceCatalogService: widget.serviceCatalogService,
     );
   }
 }
@@ -60,19 +184,34 @@ class _MyAppState extends State<MyApp> {
 class HomePage extends StatelessWidget {
   final InventoryService inventoryService;
   final CustomerService customerService;
+  final FinanceService financeService;
+  final ServiceCatalogService serviceCatalogService;
 
   const HomePage({
     super.key,
     required this.inventoryService,
     required this.customerService,
+    required this.financeService,
+    required this.serviceCatalogService,
   });
+
+  Future<void> _cerrarSesion(BuildContext context) async {
+    await Supabase.instance.client.auth.signOut();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Green Garden'),
-        actions: const [ThemeToggleButton()],
+        actions: [
+          const ThemeToggleButton(),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            icon: const Icon(Icons.logout),
+            onPressed: () => _cerrarSesion(context),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -100,7 +239,35 @@ class HomePage extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => CustomerScreen(service: customerService),
+                    builder: (_) => CustomerScreen(
+                      service: customerService,
+                      serviceCatalog: serviceCatalogService,
+                      financeService: financeService,
+                    ),
+                  ),
+                );
+              },
+            ),
+            _ModuleCard(
+              icon: Icons.attach_money,
+              label: 'Finanzas',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => FinanceScreen(service: financeService),
+                  ),
+                );
+              },
+            ),
+            _ModuleCard(
+              icon: Icons.handyman,
+              label: 'Servicios',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ServicesScreen(service: serviceCatalogService),
                   ),
                 );
               },

@@ -35,6 +35,10 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Cliente de Supabase (base de datos, autenticación y sincronización
+  # en la nube).
+  supabase_flutter: ^2.17.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -1,28 +1,22 @@
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/customer.dart';
 
-/// Servicio encargado de administrar los clientes/trabajos agendados.
-/// Igual que [InventoryService], concentra toda la lógica de negocio
-/// separada de las vistas, y notifica a quien lo escuche cuando los
-/// datos cambian.
+/// Servicio encargado de administrar los clientes/trabajos agendados,
+/// respaldado por la tabla `clientes` de Supabase.
+///
+/// Este servicio NO conoce nada de Finanzas a propósito (para mantener
+/// los módulos independientes). Es la pantalla (CustomerScreen) quien
+/// coordina: cuando se cobra un trabajo, crea el movimiento en
+/// FinanceService y le pasa el id resultante a [marcarPagado] para
+/// dejarlo enlazado.
 class CustomerService extends ChangeNotifier {
-  final List<Customer> _customers = [
-    Customer(
-      id: '1',
-      nombre: 'María Torres',
-      lugar: 'Calle 5ta, Ciudad Jardín',
-      fecha: DateTime.now().add(const Duration(days: 2)),
-      precio: 45.0,
-    ),
-    Customer(
-      id: '2',
-      nombre: 'Carlos Pérez',
-      lugar: 'Av. Las Palmas 120',
-      fecha: DateTime.now().add(const Duration(days: 5)),
-      precio: 80.0,
-    ),
-  ];
+  final SupabaseClient _client = Supabase.instance.client;
+  static const String _tabla = 'clientes';
+
+  List<Customer> _customers = [];
+  bool cargando = false;
 
   /// Lista de solo lectura de todos los clientes, ordenada por fecha.
   List<Customer> get customers {
@@ -31,21 +25,187 @@ class CustomerService extends ChangeNotifier {
     return List.unmodifiable(lista);
   }
 
-  void agregarCliente(Customer cliente) {
-    _customers.add(cliente);
-    notifyListeners();
+  /// Clientes/trabajos filtrados por estado.
+  List<Customer> porEstado(EstadoTrabajo estado) =>
+      customers.where((c) => c.estado == estado).toList();
+
+  Customer? _buscar(String id) {
+    for (final cliente in _customers) {
+      if (cliente.id == id) return cliente;
+    }
+    return null;
   }
 
-  void actualizarCliente(String id, Customer actualizado) {
-    final index = _customers.indexWhere((c) => c.id == id);
-    if (index != -1) {
-      _customers[index] = actualizado;
+  /// Descarga los clientes del usuario autenticado.
+  Future<void> cargar() async {
+    cargando = true;
+    notifyListeners();
+    try {
+      final data = await _client.from(_tabla).select();
+      _customers = (data as List)
+          .map((fila) => Customer.fromMap(fila as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      debugPrint('Error cargando clientes: $e');
+    } finally {
+      cargando = false;
       notifyListeners();
     }
   }
 
-  void eliminarCliente(String id) {
-    _customers.removeWhere((c) => c.id == id);
+  /// Vacía los datos en memoria (al cerrar sesión).
+  void limpiar() {
+    _customers = [];
     notifyListeners();
   }
+
+  Future<void> agregarCliente({
+    required String nombre,
+    required String lugar,
+    required DateTime fecha,
+    required double precio,
+    String? servicioId,
+    String servicioNombre = '',
+  }) async {
+    try {
+      final fila = await _client
+          .from(_tabla)
+          .insert({
+            'nombre': nombre,
+            'lugar': lugar,
+            'fecha': _soloFecha(fecha),
+            'precio': precio,
+            'servicio_id': servicioId,
+            'servicio_nombre': servicioNombre,
+          })
+          .select()
+          .single();
+      _customers.add(Customer.fromMap(fila));
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error agregando cliente: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> actualizarCliente(
+    String id, {
+    required String nombre,
+    required String lugar,
+    required DateTime fecha,
+    required double precio,
+    String? servicioId,
+    String servicioNombre = '',
+  }) async {
+    try {
+      await _client.from(_tabla).update({
+        'nombre': nombre,
+        'lugar': lugar,
+        'fecha': _soloFecha(fecha),
+        'precio': precio,
+        'servicio_id': servicioId,
+        'servicio_nombre': servicioNombre,
+      }).eq('id', id);
+
+      final cliente = _buscar(id);
+      if (cliente != null) {
+        cliente.nombre = nombre;
+        cliente.lugar = lugar;
+        cliente.fecha = fecha;
+        cliente.precio = precio;
+        cliente.servicioId = servicioId;
+        cliente.servicioNombre = servicioNombre;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error actualizando cliente: $e');
+      rethrow;
+    }
+  }
+
+  /// Marca el trabajo como ya realizado (pendiente de cobro).
+  Future<void> marcarRealizado(String id) async {
+    try {
+      await _client.from(_tabla).update({'estado': 'realizado'}).eq('id', id);
+      final cliente = _buscar(id);
+      if (cliente != null) {
+        cliente.estado = EstadoTrabajo.realizado;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error marcando trabajo como realizado: $e');
+      rethrow;
+    }
+  }
+
+  /// Marca el trabajo como pagado, guardando el método de pago y el id
+  /// del movimiento creado en Finanzas.
+  Future<void> marcarPagado(
+    String id, {
+    required MetodoPago metodoPago,
+    required String financeEntryId,
+  }) async {
+    final fechaPago = DateTime.now();
+    try {
+      await _client.from(_tabla).update({
+        'estado': 'pagado',
+        'metodo_pago': metodoPago.name,
+        'fecha_pago': fechaPago.toIso8601String(),
+        'finance_entry_id': financeEntryId,
+      }).eq('id', id);
+
+      final cliente = _buscar(id);
+      if (cliente != null) {
+        cliente.estado = EstadoTrabajo.pagado;
+        cliente.metodoPago = metodoPago;
+        cliente.fechaPago = fechaPago;
+        cliente.financeEntryId = financeEntryId;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error marcando trabajo como pagado: $e');
+      rethrow;
+    }
+  }
+
+  /// Deshace un cobro (por si se registró por error). No borra el
+  /// movimiento en Finanzas; eso lo hace la pantalla usando el
+  /// `financeEntryId` antes de llamar a este método.
+  Future<void> revertirCobro(String id) async {
+    try {
+      await _client.from(_tabla).update({
+        'estado': 'realizado',
+        'metodo_pago': null,
+        'fecha_pago': null,
+        'finance_entry_id': null,
+      }).eq('id', id);
+
+      final cliente = _buscar(id);
+      if (cliente != null) {
+        cliente.estado = EstadoTrabajo.realizado;
+        cliente.metodoPago = null;
+        cliente.fechaPago = null;
+        cliente.financeEntryId = null;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error revirtiendo cobro: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> eliminarCliente(String id) async {
+    try {
+      await _client.from(_tabla).delete().eq('id', id);
+      _customers.removeWhere((c) => c.id == id);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error eliminando cliente: $e');
+      rethrow;
+    }
+  }
+
+  /// La columna `fecha` en Supabase es de tipo `date` (sin hora), así
+  /// que enviamos solo "YYYY-MM-DD".
+  String _soloFecha(DateTime fecha) => fecha.toIso8601String().split('T').first;
 }

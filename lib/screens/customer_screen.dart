@@ -1,22 +1,50 @@
 import 'package:flutter/material.dart';
 
 import '../models/customer.dart';
+import '../models/finance_entry.dart';
+import '../models/service_item.dart';
 import '../services/customer_service.dart';
+import '../services/finance_service.dart';
+import '../services/service_catalog_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/theme_toggle_button.dart';
 
-/// Pantalla que muestra y administra la lista de clientes: nombre,
-/// lugar, fecha y precio acordado.
+/// Pantalla que muestra y administra la lista de clientes/trabajos:
+/// nombre, lugar, fecha, precio, servicio enlazado y el estado del
+/// trabajo (pendiente, por cobrar o pagado). Cobrar un trabajo crea
+/// automáticamente un ingreso en el módulo de Finanzas.
 class CustomerScreen extends StatefulWidget {
   final CustomerService service;
+  final ServiceCatalogService serviceCatalog;
+  final FinanceService financeService;
 
-  const CustomerScreen({super.key, required this.service});
+  const CustomerScreen({
+    super.key,
+    required this.service,
+    required this.serviceCatalog,
+    required this.financeService,
+  });
 
   @override
   State<CustomerScreen> createState() => _CustomerScreenState();
 }
 
-class _CustomerScreenState extends State<CustomerScreen> {
+class _CustomerScreenState extends State<CustomerScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
   Future<void> _abrirFormulario({Customer? cliente}) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -31,6 +59,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
         child: _CustomerFormSheet(
           service: widget.service,
+          serviceCatalog: widget.serviceCatalog,
           cliente: cliente,
         ),
       ),
@@ -50,15 +79,107 @@ class _CustomerScreenState extends State<CustomerScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () {
-              widget.service.eliminarCliente(cliente.id);
-              Navigator.pop(context);
+            onPressed: () async {
+              final navigator = Navigator.of(context);
+              try {
+                // Si este trabajo ya tenía un cobro registrado en
+                // Finanzas, lo eliminamos también para no dejar un
+                // ingreso "huérfano" de un cliente que ya no existe.
+                if (cliente.financeEntryId != null) {
+                  await widget.financeService.eliminarMovimiento(cliente.financeEntryId!);
+                }
+                await widget.service.eliminarCliente(cliente.id);
+                navigator.pop();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
+                  );
+                }
+              }
             },
             child: const Text('Eliminar'),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _cobrar(Customer cliente) async {
+    final metodo = await showDialog<MetodoPago>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Cobrar a ${cliente.nombre}'),
+        content: Text(
+          'Monto a cobrar: \$${cliente.precio.toStringAsFixed(2)}\n\n¿Cómo pagó?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(context, MetodoPago.efectivo),
+            icon: const Icon(Icons.payments_outlined),
+            label: const Text('Efectivo'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, MetodoPago.yappy),
+            icon: const Icon(Icons.smartphone),
+            label: const Text('Yappy'),
+          ),
+        ],
+      ),
+    );
+
+    if (metodo == null) return;
+
+    try {
+      // Se crea el ingreso en Finanzas y se enlaza su id al cliente,
+      // así ambos módulos quedan sincronizados sin acoplarse
+      // directamente.
+      final entryId = await widget.financeService.agregarMovimiento(
+        descripcion: cliente.servicioNombre.isNotEmpty
+            ? 'Cobro a ${cliente.nombre} - ${cliente.servicioNombre}'
+            : 'Cobro a ${cliente.nombre}',
+        tipo: TipoMovimiento.ingreso,
+        monto: cliente.precio,
+        fecha: DateTime.now(),
+        categoria: metodo.label,
+      );
+      await widget.service.marcarPagado(
+        cliente.id,
+        metodoPago: metodo,
+        financeEntryId: entryId,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cobro registrado con ${metodo.label}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo registrar el cobro. Intenta de nuevo.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deshacerCobro(Customer cliente) async {
+    try {
+      if (cliente.financeEntryId != null) {
+        await widget.financeService.eliminarMovimiento(cliente.financeEntryId!);
+      }
+      await widget.service.revertirCobro(cliente.id);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo deshacer el cobro. Intenta de nuevo.')),
+        );
+      }
+    }
   }
 
   String _formatearFecha(DateTime fecha) {
@@ -73,65 +194,54 @@ class _CustomerScreenState extends State<CustomerScreen> {
       appBar: AppBar(
         title: const Text('Clientes'),
         actions: const [ThemeToggleButton()],
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: AppColors.limeGreen,
+          indicatorWeight: 3,
+          labelColor: Theme.of(context).appBarTheme.foregroundColor,
+          unselectedLabelColor:
+              Theme.of(context).appBarTheme.foregroundColor?.withValues(alpha: 0.65),
+          tabs: const [
+            Tab(text: 'Pendientes'),
+            Tab(text: 'Por cobrar'),
+            Tab(text: 'Historial'),
+          ],
+        ),
       ),
       body: ListenableBuilder(
         listenable: widget.service,
         builder: (context, _) {
-          final clientes = widget.service.customers;
-
-          if (clientes.isEmpty) {
-            return Center(
-              child: Text(
-                'Aún no hay clientes registrados.\nToca "Nuevo cliente" para agregar uno.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
+          return TabBarView(
+            controller: _tabController,
+            children: [
+              _ListaClientes(
+                clientes: widget.service.porEstado(EstadoTrabajo.pendiente),
+                formatearFecha: _formatearFecha,
+                onTap: (c) => _abrirFormulario(cliente: c),
+                onDelete: _confirmarEliminar,
+                onMarcarRealizado: widget.service.marcarRealizado,
+                onCobrar: _cobrar,
+                onDeshacerCobro: _deshacerCobro,
               ),
-            );
-          }
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: clientes.length,
-            itemBuilder: (context, index) {
-              final cliente = clientes[index];
-              return Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                child: ListTile(
-                  onTap: () => _abrirFormulario(cliente: cliente),
-                  leading: CircleAvatar(
-                    backgroundColor: AppColors.limeGreen.withValues(alpha: 0.25),
-                    child: const Icon(Icons.person, color: AppColors.darkGreen),
-                  ),
-                  title: Text(cliente.nombre),
-                  subtitle: Text(
-                    '${cliente.lugar}\n${_formatearFecha(cliente.fecha)}',
-                  ),
-                  isThreeLine: true,
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '\$${cliente.precio.toStringAsFixed(2)}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      // El ListTile limita la altura de "trailing" a un
-                      // máximo fijo (56px). Apilar el precio y el botón
-                      // verticalmente (Column) seguía sin caber en ese
-                      // espacio. Ponerlos en fila (Row) evita el
-                      // problema por completo, ya que ambos comparten
-                      // el mismo alto en vez de sumarse.
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        onPressed: () => _confirmarEliminar(cliente),
-                        tooltip: 'Eliminar',
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+              _ListaClientes(
+                clientes: widget.service.porEstado(EstadoTrabajo.realizado),
+                formatearFecha: _formatearFecha,
+                onTap: (c) => _abrirFormulario(cliente: c),
+                onDelete: _confirmarEliminar,
+                onMarcarRealizado: widget.service.marcarRealizado,
+                onCobrar: _cobrar,
+                onDeshacerCobro: _deshacerCobro,
+              ),
+              _ListaClientes(
+                clientes: widget.service.porEstado(EstadoTrabajo.pagado),
+                formatearFecha: _formatearFecha,
+                onTap: (c) => _abrirFormulario(cliente: c),
+                onDelete: _confirmarEliminar,
+                onMarcarRealizado: widget.service.marcarRealizado,
+                onCobrar: _cobrar,
+                onDeshacerCobro: _deshacerCobro,
+              ),
+            ],
           );
         },
       ),
@@ -144,12 +254,155 @@ class _CustomerScreenState extends State<CustomerScreen> {
   }
 }
 
+class _ListaClientes extends StatelessWidget {
+  final List<Customer> clientes;
+  final String Function(DateTime) formatearFecha;
+  final ValueChanged<Customer> onTap;
+  final ValueChanged<Customer> onDelete;
+  final ValueChanged<String> onMarcarRealizado;
+  final ValueChanged<Customer> onCobrar;
+  final ValueChanged<Customer> onDeshacerCobro;
+
+  const _ListaClientes({
+    required this.clientes,
+    required this.formatearFecha,
+    required this.onTap,
+    required this.onDelete,
+    required this.onMarcarRealizado,
+    required this.onCobrar,
+    required this.onDeshacerCobro,
+  });
+
+  Color _colorEstado(EstadoTrabajo estado) {
+    switch (estado) {
+      case EstadoTrabajo.pendiente:
+        return Colors.orange;
+      case EstadoTrabajo.realizado:
+        return Colors.blueGrey;
+      case EstadoTrabajo.pagado:
+        return AppColors.darkGreen;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (clientes.isEmpty) {
+      return Center(
+        child: Text(
+          'No hay clientes en esta categoría todavía.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: clientes.length,
+      itemBuilder: (context, index) {
+        final cliente = clientes[index];
+        final colorEstado = _colorEstado(cliente.estado);
+
+        final subtitulo = StringBuffer();
+        if (cliente.servicioNombre.isNotEmpty) {
+          subtitulo.write('${cliente.servicioNombre} • ');
+        }
+        subtitulo.write(cliente.lugar);
+        subtitulo.write('\n${formatearFecha(cliente.fecha)}');
+        if (cliente.estado == EstadoTrabajo.pagado && cliente.metodoPago != null) {
+          subtitulo.write(
+            ' • Pagado con ${cliente.metodoPago!.label}'
+            '${cliente.fechaPago != null ? " el ${formatearFecha(cliente.fechaPago!)}" : ""}',
+          );
+        }
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 10),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ListTile(
+                  onTap: () => onTap(cliente),
+                  leading: CircleAvatar(
+                    backgroundColor: colorEstado.withValues(alpha: 0.2),
+                    child: Icon(Icons.person, color: colorEstado),
+                  ),
+                  title: Text(cliente.nombre),
+                  subtitle: Text(subtitulo.toString()),
+                  isThreeLine: true,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '\$${cliente.precio.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => onDelete(cliente),
+                        tooltip: 'Eliminar',
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, right: 8),
+                  child: Row(
+                    children: [
+                      Chip(
+                        label: Text(cliente.estado.label),
+                        backgroundColor: colorEstado.withValues(alpha: 0.15),
+                        labelStyle: TextStyle(color: colorEstado, fontSize: 12),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      const Spacer(),
+                      if (cliente.estado == EstadoTrabajo.pendiente)
+                        TextButton.icon(
+                          onPressed: () => onMarcarRealizado(cliente.id),
+                          icon: const Icon(Icons.check_circle_outline, size: 18),
+                          label: const Text('Marcar realizado'),
+                        ),
+                      if (cliente.estado == EstadoTrabajo.realizado)
+                        FilledButton.icon(
+                          onPressed: () => onCobrar(cliente),
+                          icon: const Icon(Icons.attach_money, size: 18),
+                          label: const Text('Cobrar'),
+                        ),
+                      if (cliente.estado == EstadoTrabajo.pagado)
+                        TextButton.icon(
+                          onPressed: () => onDeshacerCobro(cliente),
+                          icon: const Icon(Icons.undo, size: 18),
+                          label: const Text('Deshacer cobro'),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Formulario para crear o editar un cliente.
 class _CustomerFormSheet extends StatefulWidget {
   final CustomerService service;
+  final ServiceCatalogService serviceCatalog;
   final Customer? cliente;
 
-  const _CustomerFormSheet({required this.service, this.cliente});
+  const _CustomerFormSheet({
+    required this.service,
+    required this.serviceCatalog,
+    this.cliente,
+  });
 
   @override
   State<_CustomerFormSheet> createState() => _CustomerFormSheetState();
@@ -161,6 +414,7 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
   late final TextEditingController _lugarCtrl;
   late final TextEditingController _precioCtrl;
   late DateTime _fecha;
+  String? _servicioIdSeleccionado;
 
   bool get _esEdicion => widget.cliente != null;
 
@@ -174,6 +428,7 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
       text: cliente != null ? cliente.precio.toString() : '',
     );
     _fecha = cliente?.fecha ?? DateTime.now();
+    _servicioIdSeleccionado = cliente?.servicioId;
   }
 
   @override
@@ -196,33 +451,61 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
     }
   }
 
-  void _guardar() {
+  void _seleccionarServicio(ServiceItem? servicio) {
+    setState(() {
+      _servicioIdSeleccionado = servicio?.id;
+      // Sugerimos el precio del servicio, pero el usuario puede
+      // ajustarlo libremente después (por ejemplo, si cobra distinto
+      // por distancia o tamaño del trabajo).
+      if (servicio != null) {
+        _precioCtrl.text = servicio.precio.toString();
+      }
+    });
+  }
+
+  bool _guardando = false;
+
+  Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
 
     final nombre = _nombreCtrl.text.trim();
     final lugar = _lugarCtrl.text.trim();
     final precio = double.parse(_precioCtrl.text.trim());
+    final servicioSeleccionado =
+        widget.serviceCatalog.buscarPorId(_servicioIdSeleccionado);
 
-    if (_esEdicion) {
-      final actualizado = widget.cliente!.copyWith(
-        nombre: nombre,
-        lugar: lugar,
-        fecha: _fecha,
-        precio: precio,
-      );
-      widget.service.actualizarCliente(widget.cliente!.id, actualizado);
-    } else {
-      final nuevo = Customer(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        nombre: nombre,
-        lugar: lugar,
-        fecha: _fecha,
-        precio: precio,
-      );
-      widget.service.agregarCliente(nuevo);
+    setState(() => _guardando = true);
+
+    try {
+      if (_esEdicion) {
+        await widget.service.actualizarCliente(
+          widget.cliente!.id,
+          nombre: nombre,
+          lugar: lugar,
+          fecha: _fecha,
+          precio: precio,
+          servicioId: servicioSeleccionado?.id,
+          servicioNombre: servicioSeleccionado?.nombre ?? '',
+        );
+      } else {
+        await widget.service.agregarCliente(
+          nombre: nombre,
+          lugar: lugar,
+          fecha: _fecha,
+          precio: precio,
+          servicioId: servicioSeleccionado?.id,
+          servicioNombre: servicioSeleccionado?.nombre ?? '',
+        );
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _guardando = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo guardar. Revisa tu conexión.')),
+        );
+      }
     }
-
-    Navigator.pop(context);
   }
 
   @override
@@ -274,6 +557,34 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
                         : null,
               ),
               const SizedBox(height: 12),
+              ListenableBuilder(
+                listenable: widget.serviceCatalog,
+                builder: (context, _) {
+                  final servicios = widget.serviceCatalog.servicios;
+                  return DropdownButtonFormField<String?>(
+                    initialValue: _servicioIdSeleccionado,
+                    decoration: const InputDecoration(
+                      labelText: 'Servicio (opcional)',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Sin enlazar a un servicio'),
+                      ),
+                      ...servicios.map(
+                        (s) => DropdownMenuItem<String?>(
+                          value: s.id,
+                          child: Text('${s.nombre} (\$${s.precio.toStringAsFixed(2)})'),
+                        ),
+                      ),
+                    ],
+                    onChanged: (id) => _seleccionarServicio(
+                      widget.serviceCatalog.buscarPorId(id),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
               InkWell(
                 onTap: _elegirFecha,
                 child: InputDecorator(
@@ -305,8 +616,14 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
               ),
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: _guardar,
-                child: Text(_esEdicion ? 'Guardar cambios' : 'Agregar'),
+                onPressed: _guardando ? null : _guardar,
+                child: _guardando
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(_esEdicion ? 'Guardar cambios' : 'Agregar'),
               ),
             ],
           ),

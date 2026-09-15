@@ -65,9 +65,18 @@ class _InventoryScreenState extends State<InventoryScreen>
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () {
-              widget.service.eliminarItem(item.id);
-              Navigator.pop(context);
+            onPressed: () async {
+              final navigator = Navigator.of(context);
+              try {
+                await widget.service.eliminarItem(item.id);
+                navigator.pop();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
+                  );
+                }
+              }
             },
             child: const Text('Eliminar'),
           ),
@@ -136,7 +145,7 @@ class _ListaItems extends StatelessWidget {
   final List<InventoryItem> items;
   final ValueChanged<InventoryItem> onTap;
   final ValueChanged<InventoryItem> onDelete;
-  final void Function(String id, double delta) onAjustar;
+  final Future<void> Function(String id, double delta) onAjustar;
 
   const _ListaItems({
     required this.items,
@@ -262,7 +271,9 @@ class _ItemFormSheetState extends State<_ItemFormSheet> {
     super.dispose();
   }
 
-  void _guardar() {
+  bool _guardando = false;
+
+  Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
 
     final nombre = _nombreCtrl.text.trim();
@@ -271,30 +282,38 @@ class _ItemFormSheetState extends State<_ItemFormSheet> {
     final stockMinimo = double.tryParse(_stockMinimoCtrl.text.trim()) ?? 0;
     final notas = _notasCtrl.text.trim();
 
-    if (_esEdicion) {
-      final actualizado = widget.item!.copyWith(
-        nombre: nombre,
-        categoria: _categoria,
-        cantidad: cantidad,
-        unidad: unidad,
-        stockMinimo: stockMinimo,
-        notas: notas,
-      );
-      widget.service.actualizarItem(widget.item!.id, actualizado);
-    } else {
-      final nuevo = InventoryItem(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        nombre: nombre,
-        categoria: _categoria,
-        cantidad: cantidad,
-        unidad: unidad,
-        stockMinimo: stockMinimo,
-        notas: notas,
-      );
-      widget.service.agregarItem(nuevo);
-    }
+    setState(() => _guardando = true);
 
-    Navigator.pop(context);
+    try {
+      if (_esEdicion) {
+        await widget.service.actualizarItem(
+          widget.item!.id,
+          nombre: nombre,
+          categoria: _categoria,
+          cantidad: cantidad,
+          unidad: unidad,
+          stockMinimo: stockMinimo,
+          notas: notas,
+        );
+      } else {
+        await widget.service.agregarItem(
+          nombre: nombre,
+          categoria: _categoria,
+          cantidad: cantidad,
+          unidad: unidad,
+          stockMinimo: stockMinimo,
+          notas: notas,
+        );
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _guardando = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo guardar. Revisa tu conexión.')),
+        );
+      }
+    }
   }
 
   @override
@@ -400,8 +419,14 @@ class _ItemFormSheetState extends State<_ItemFormSheet> {
               ),
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: _guardar,
-                child: Text(_esEdicion ? 'Guardar cambios' : 'Agregar'),
+                onPressed: _guardando ? null : _guardar,
+                child: _guardando
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(_esEdicion ? 'Guardar cambios' : 'Agregar'),
               ),
             ],
           ),

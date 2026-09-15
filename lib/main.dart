@@ -4,13 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'screens/auth_screen.dart';
+import 'screens/business_profile_screen.dart';
 import 'screens/customer_screen.dart';
 import 'screens/finance_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/services_screen.dart';
+import 'services/business_profile_service.dart';
 import 'services/customer_service.dart';
 import 'services/finance_service.dart';
 import 'services/inventory_service.dart';
+import 'services/invoice_service.dart';
 import 'services/service_catalog_service.dart';
 import 'supabase/supabase_config.dart';
 import 'theme/app_theme.dart';
@@ -52,6 +55,8 @@ class _MyAppState extends State<MyApp> {
   final CustomerService _customerService = CustomerService();
   final FinanceService _financeService = FinanceService();
   final ServiceCatalogService _serviceCatalogService = ServiceCatalogService();
+  final BusinessProfileService _businessProfileService = BusinessProfileService();
+  final InvoiceService _invoiceService = InvoiceService();
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +78,8 @@ class _MyAppState extends State<MyApp> {
             customerService: _customerService,
             financeService: _financeService,
             serviceCatalogService: _serviceCatalogService,
+            businessProfileService: _businessProfileService,
+            invoiceService: _invoiceService,
           ),
         );
       },
@@ -94,6 +101,8 @@ class AuthGate extends StatefulWidget {
   final CustomerService customerService;
   final FinanceService financeService;
   final ServiceCatalogService serviceCatalogService;
+  final BusinessProfileService businessProfileService;
+  final InvoiceService invoiceService;
 
   const AuthGate({
     super.key,
@@ -101,6 +110,8 @@ class AuthGate extends StatefulWidget {
     required this.customerService,
     required this.financeService,
     required this.serviceCatalogService,
+    required this.businessProfileService,
+    required this.invoiceService,
   });
 
   @override
@@ -146,6 +157,7 @@ class _AuthGateState extends State<AuthGate> {
       widget.customerService.cargar(),
       widget.financeService.cargar(),
       widget.serviceCatalogService.cargar(),
+      widget.businessProfileService.cargar(),
     ]);
     if (mounted) setState(() => _cargandoInicial = false);
   }
@@ -155,6 +167,7 @@ class _AuthGateState extends State<AuthGate> {
     widget.customerService.limpiar();
     widget.financeService.limpiar();
     widget.serviceCatalogService.limpiar();
+    widget.businessProfileService.limpiar();
   }
 
   @override
@@ -174,6 +187,8 @@ class _AuthGateState extends State<AuthGate> {
       customerService: widget.customerService,
       financeService: widget.financeService,
       serviceCatalogService: widget.serviceCatalogService,
+      businessProfileService: widget.businessProfileService,
+      invoiceService: widget.invoiceService,
     );
   }
 }
@@ -186,6 +201,8 @@ class HomePage extends StatelessWidget {
   final CustomerService customerService;
   final FinanceService financeService;
   final ServiceCatalogService serviceCatalogService;
+  final BusinessProfileService businessProfileService;
+  final InvoiceService invoiceService;
 
   const HomePage({
     super.key,
@@ -193,6 +210,8 @@ class HomePage extends StatelessWidget {
     required this.customerService,
     required this.financeService,
     required this.serviceCatalogService,
+    required this.businessProfileService,
+    required this.invoiceService,
   });
 
   Future<void> _cerrarSesion(BuildContext context) async {
@@ -206,6 +225,18 @@ class HomePage extends StatelessWidget {
         title: const Text('Green Garden'),
         actions: [
           const ThemeToggleButton(),
+          IconButton(
+            tooltip: 'Mi negocio',
+            icon: const Icon(Icons.storefront_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => BusinessProfileScreen(service: businessProfileService),
+                ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
@@ -243,6 +274,8 @@ class HomePage extends StatelessWidget {
                       service: customerService,
                       serviceCatalog: serviceCatalogService,
                       financeService: financeService,
+                      businessProfileService: businessProfileService,
+                      invoiceService: invoiceService,
                     ),
                   ),
                 );

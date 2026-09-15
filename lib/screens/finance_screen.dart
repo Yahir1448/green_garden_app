@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/finance_entry.dart';
 import '../services/finance_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/finance_chart.dart';
 import '../widgets/theme_toggle_button.dart';
 
 /// Pantalla de finanzas: muestra el balance general (ingresos, egresos
@@ -111,6 +112,7 @@ class _FinanceScreenState extends State<FinanceScreen>
           return Column(
             children: [
               _ResumenBalance(service: widget.service),
+              FinanceChart(service: widget.service),
               Expanded(
                 child: TabBarView(
                   controller: _tabController,

@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:printing/printing.dart';
 
+import '../models/business_profile.dart';
 import '../models/customer.dart';
 import '../models/finance_entry.dart';
 import '../models/service_item.dart';
+import '../pdf/invoice_pdf.dart';
+import '../services/business_profile_service.dart';
 import '../services/customer_service.dart';
 import '../services/finance_service.dart';
+import '../services/invoice_service.dart';
 import '../services/service_catalog_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/theme_toggle_button.dart';
+import 'business_profile_screen.dart';
 
 /// Pantalla que muestra y administra la lista de clientes/trabajos:
 /// nombre, lugar, fecha, precio, servicio enlazado y el estado del
@@ -17,12 +23,16 @@ class CustomerScreen extends StatefulWidget {
   final CustomerService service;
   final ServiceCatalogService serviceCatalog;
   final FinanceService financeService;
+  final BusinessProfileService businessProfileService;
+  final InvoiceService invoiceService;
 
   const CustomerScreen({
     super.key,
     required this.service,
     required this.serviceCatalog,
     required this.financeService,
+    required this.businessProfileService,
+    required this.invoiceService,
   });
 
   @override
@@ -182,6 +192,62 @@ class _CustomerScreenState extends State<CustomerScreen>
     }
   }
 
+  Future<void> _generarFactura(Customer cliente) async {
+    final perfil = widget.businessProfileService.perfil;
+
+    if (!perfil.estaCompleto) {
+      if (!mounted) return;
+      final irAConfigurar = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Completa los datos de tu negocio'),
+          content: const Text(
+            'Antes de generar tu primera factura, necesitas poner el '
+            'nombre comercial y el operador responsable en "Mi negocio".',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Ir a Mi negocio'),
+            ),
+          ],
+        ),
+      );
+      if (irAConfigurar == true && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => BusinessProfileScreen(service: widget.businessProfileService),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final numero = await widget.invoiceService.registrarFactura(
+        clienteId: cliente.id,
+        monto: cliente.precio,
+      );
+      final bytes = await InvoicePdf.generar(
+        cliente: cliente,
+        perfil: perfil,
+        numeroFactura: numero,
+      );
+      await Printing.layoutPdf(onLayout: (_) async => bytes);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo generar la factura. Intenta de nuevo.')),
+        );
+      }
+    }
+  }
+
   String _formatearFecha(DateTime fecha) {
     final dia = fecha.day.toString().padLeft(2, '0');
     final mes = fecha.month.toString().padLeft(2, '0');
@@ -222,6 +288,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 onMarcarRealizado: widget.service.marcarRealizado,
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
+                onGenerarFactura: _generarFactura,
               ),
               _ListaClientes(
                 clientes: widget.service.porEstado(EstadoTrabajo.realizado),
@@ -231,6 +298,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 onMarcarRealizado: widget.service.marcarRealizado,
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
+                onGenerarFactura: _generarFactura,
               ),
               _ListaClientes(
                 clientes: widget.service.porEstado(EstadoTrabajo.pagado),
@@ -240,6 +308,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 onMarcarRealizado: widget.service.marcarRealizado,
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
+                onGenerarFactura: _generarFactura,
               ),
             ],
           );
@@ -262,6 +331,7 @@ class _ListaClientes extends StatelessWidget {
   final ValueChanged<String> onMarcarRealizado;
   final ValueChanged<Customer> onCobrar;
   final ValueChanged<Customer> onDeshacerCobro;
+  final ValueChanged<Customer> onGenerarFactura;
 
   const _ListaClientes({
     required this.clientes,
@@ -271,6 +341,7 @@ class _ListaClientes extends StatelessWidget {
     required this.onMarcarRealizado,
     required this.onCobrar,
     required this.onDeshacerCobro,
+    required this.onGenerarFactura,
   });
 
   Color _colorEstado(EstadoTrabajo estado) {
@@ -338,6 +409,14 @@ class _ListaClientes extends StatelessWidget {
                       Text(
                         '\$${cliente.precio.toStringAsFixed(2)}',
                         style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(Icons.receipt_long_outlined, size: 20),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => onGenerarFactura(cliente),
+                        tooltip: 'Generar factura',
                       ),
                       const SizedBox(width: 4),
                       IconButton(

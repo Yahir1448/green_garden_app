@@ -48,10 +48,12 @@ class _AuthScreenState extends State<AuthScreen> {
           email: email,
           password: password,
         );
+
         if (mounted) {
           setState(() {
             _error = null;
           });
+
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
@@ -66,15 +68,61 @@ class _AuthScreenState extends State<AuthScreen> {
           email: email,
           password: password,
         );
+
         // Si el inicio de sesión es exitoso, el listener de sesión en
         // main.dart se encarga de navegar automáticamente al home.
       }
     } on AuthException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = 'Ocurrió un error inesperado. Intenta de nuevo.');
+      setState(
+        () => _error = 'Ocurrió un error inesperado. Intenta de nuevo.',
+      );
     } finally {
       if (mounted) setState(() => _cargando = false);
+    }
+  }
+
+  Future<void> _recuperarContrasena() async {
+    final email = _emailCtrl.text.trim();
+
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() {
+        _error = 'Ingresa tu correo electrónico primero';
+      });
+      return;
+    }
+
+    setState(() {
+      _cargando = true;
+      _error = null;
+    });
+
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: 'io.supabase.greengarden://reset-password',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Revisa tu correo electrónico para recuperar tu contraseña.',
+            ),
+          ),
+        );
+      }
+    } on AuthException catch (e) {
+      setState(() => _error = e.message);
+    } catch (e) {
+      setState(
+        () => _error = 'Ocurrió un error inesperado. Intenta de nuevo.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _cargando = false);
+      }
     }
   }
 
@@ -98,13 +146,17 @@ class _AuthScreenState extends State<AuthScreen> {
                       size: 64,
                       color: AppColors.darkGreen,
                     ),
+
                     const SizedBox(height: 12),
+
                     Text(
                       'Green Garden',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
+
                     const SizedBox(height: 4),
+
                     Text(
                       _esRegistro
                           ? 'Crea tu cuenta para empezar'
@@ -112,7 +164,9 @@ class _AuthScreenState extends State<AuthScreen> {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
+
                     const SizedBox(height: 32),
+
                     TextFormField(
                       controller: _emailCtrl,
                       keyboardType: TextInputType.emailAddress,
@@ -124,13 +178,17 @@ class _AuthScreenState extends State<AuthScreen> {
                         if (value == null || value.trim().isEmpty) {
                           return 'Ingresa tu correo';
                         }
+
                         if (!value.contains('@')) {
                           return 'Correo inválido';
                         }
+
                         return null;
                       },
                     ),
+
                     const SizedBox(height: 12),
+
                     TextFormField(
                       controller: _passwordCtrl,
                       obscureText: true,
@@ -142,9 +200,11 @@ class _AuthScreenState extends State<AuthScreen> {
                         if (value == null || value.length < 6) {
                           return 'Mínimo 6 caracteres';
                         }
+
                         return null;
                       },
                     ),
+
                     if (_error != null) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -152,25 +212,47 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: const TextStyle(color: Colors.redAccent),
                       ),
                     ],
+
                     const SizedBox(height: 24),
+
                     FilledButton(
                       onPressed: _cargando ? null : _enviar,
                       child: _cargando
                           ? const SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
                             )
-                          : Text(_esRegistro ? 'Crear cuenta' : 'Iniciar sesión'),
+                          : Text(
+                              _esRegistro
+                                  ? 'Crear cuenta'
+                                  : 'Iniciar sesión',
+                            ),
                     ),
+
+                    if (!_esRegistro) ...[
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _cargando
+                            ? null
+                            : _recuperarContrasena,
+                        child: const Text(
+                          '¿Olvidaste tu contraseña?',
+                        ),
+                      ),
+                    ],
+
                     const SizedBox(height: 12),
+
                     TextButton(
                       onPressed: _cargando
                           ? null
                           : () => setState(() {
-                                _esRegistro = !_esRegistro;
-                                _error = null;
-                              }),
+                              _esRegistro = !_esRegistro;
+                              _error = null;
+                            }),
                       child: Text(
                         _esRegistro
                             ? '¿Ya tienes cuenta? Inicia sesión'

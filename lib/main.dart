@@ -14,6 +14,7 @@ import 'services/customer_service.dart';
 import 'services/finance_service.dart';
 import 'services/inventory_service.dart';
 import 'services/invoice_service.dart';
+import 'services/notification_service.dart';
 import 'services/service_catalog_service.dart';
 import 'supabase/supabase_config.dart';
 import 'theme/app_theme.dart';
@@ -30,6 +31,11 @@ Future<void> main() async {
     url: SupabaseConfig.supabaseUrl,
     anonKey: SupabaseConfig.supabaseAnonKey,
   );
+
+  // Notificaciones locales (stock bajo, trabajos agendados, cobros y
+  // facturas). No depende de ningún servidor externo: se apoya en los
+  // datos que ya vienen de Supabase.
+  await NotificationService.instance.inicializar();
 
   runApp(const MyApp());
 }
@@ -95,7 +101,8 @@ class _MyAppState extends State<MyApp> {
 ///   sesión (`cargar()` en cada servicio).
 /// - Vaciar los datos en memoria al cerrar sesión (`limpiar()`), para
 ///   que si otra persona inicia sesión con otra cuenta en el mismo
-///   teléfono, no vea ningún dato de la cuenta anterior.
+///   teléfono, no vea ningún dato de la cuenta anterior. Esto incluye
+///   cancelar todas las notificaciones pendientes.
 class AuthGate extends StatefulWidget {
   final InventoryService inventoryService;
   final CustomerService customerService;
@@ -168,6 +175,9 @@ class _AuthGateState extends State<AuthGate> {
     widget.financeService.limpiar();
     widget.serviceCatalogService.limpiar();
     widget.businessProfileService.limpiar();
+    // Evita que la próxima cuenta que inicie sesión en este teléfono
+    // reciba avisos programados con datos de la cuenta anterior.
+    NotificationService.instance.limpiarTodo();
   }
 
   @override

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/inventory_item.dart';
+import 'notification_service.dart';
 
 /// Servicio encargado de administrar el inventario de herramientas e
 /// insumos, respaldado por la tabla `inventario` de Supabase. Cada
@@ -35,6 +36,9 @@ class InventoryService extends ChangeNotifier {
       _items = (data as List)
           .map((fila) => InventoryItem.fromMap(fila as Map<String, dynamic>))
           .toList();
+      // Avisa de una sola vez si algún artículo ya está bajo de stock
+      // desde antes de abrir la app.
+      await NotificationService.instance.revisarStockBajoLista(_items);
     } catch (e) {
       debugPrint('Error cargando inventario: $e');
     } finally {
@@ -75,8 +79,10 @@ class InventoryService extends ChangeNotifier {
           })
           .select()
           .single();
-      _items.add(InventoryItem.fromMap(fila));
+      final creado = InventoryItem.fromMap(fila);
+      _items.add(creado);
       notifyListeners();
+      await NotificationService.instance.revisarStockBajo(creado);
     } catch (e) {
       debugPrint('Error agregando artículo: $e');
       rethrow;
@@ -115,6 +121,7 @@ class InventoryService extends ChangeNotifier {
           notas: notas,
         );
         notifyListeners();
+        await NotificationService.instance.revisarStockBajo(_items[index]);
       }
     } catch (e) {
       debugPrint('Error actualizando artículo: $e');
@@ -139,6 +146,7 @@ class InventoryService extends ChangeNotifier {
 
       _items[index] = _items[index].copyWith(cantidad: nuevaCantidad);
       notifyListeners();
+      await NotificationService.instance.revisarStockBajo(_items[index]);
     } catch (e) {
       debugPrint('Error ajustando cantidad: $e');
       rethrow;

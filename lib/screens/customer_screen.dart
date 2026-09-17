@@ -10,6 +10,7 @@ import '../services/business_profile_service.dart';
 import '../services/customer_service.dart';
 import '../services/finance_service.dart';
 import '../services/invoice_service.dart';
+import '../services/notification_service.dart';
 import '../services/service_catalog_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/theme_toggle_button.dart';
@@ -239,6 +240,10 @@ class _CustomerScreenState extends State<CustomerScreen>
         numeroFactura: numero,
       );
       await Printing.layoutPdf(onLayout: (_) async => bytes);
+      await NotificationService.instance.avisarFacturaGenerada(
+        numero: numero,
+        clienteNombre: cliente.nombre,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

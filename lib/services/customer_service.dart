@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/customer.dart';
+import 'notification_service.dart';
 
 /// Servicio encargado de administrar los clientes/trabajos agendados,
 /// respaldado por la tabla `clientes` de Supabase.
@@ -11,6 +12,12 @@ import '../models/customer.dart';
 /// coordina: cuando se cobra un trabajo, crea el movimiento en
 /// FinanceService y le pasa el id resultante a [marcarPagado] para
 /// dejarlo enlazado.
+///
+/// Sí conoce a [NotificationService], porque los recordatorios de
+/// trabajos agendados y los avisos de cobro están directamente
+/// atados al ciclo de vida de un cliente (se crean, se reprograman o
+/// se cancelan junto con él), sin importar desde qué pantalla se
+/// dispare la acción.
 class CustomerService extends ChangeNotifier {
   final SupabaseClient _client = Supabase.instance.client;
   static const String _tabla = 'clientes';
@@ -45,6 +52,20 @@ class CustomerService extends ChangeNotifier {
       _customers = (data as List)
           .map((fila) => Customer.fromMap(fila as Map<String, dynamic>))
           .toList();
+
+      // Deja las alarmas de este dispositivo al día (por ejemplo, tras
+      // reinstalar la app o iniciar sesión en un teléfono nuevo).
+      await NotificationService.instance
+          .reprogramarTrabajosPendientes(_customers);
+      for (final cliente in _customers) {
+        if (cliente.estado == EstadoTrabajo.realizado) {
+          // Solo reinicia el recordatorio semanal recurrente; no
+          // reenvía el aviso inmediato de "cobro pendiente" cada vez
+          // que se abre la app.
+          await NotificationService.instance
+              .iniciarRecordatorioCobroSemanal(cliente);
+        }
+      }
     } catch (e) {
       debugPrint('Error cargando clientes: $e');
     } finally {
@@ -80,8 +101,13 @@ class CustomerService extends ChangeNotifier {
           })
           .select()
           .single();
-      _customers.add(Customer.fromMap(fila));
+      final creado = Customer.fromMap(fila);
+      _customers.add(creado);
       notifyListeners();
+      // Un cliente nuevo siempre arranca en estado "pendiente", así
+      // que programamos sus recordatorios de una vez.
+      await NotificationService.instance
+          .programarRecordatoriosTrabajo(creado);
     } catch (e) {
       debugPrint('Error agregando cliente: $e');
       rethrow;
@@ -116,6 +142,12 @@ class CustomerService extends ChangeNotifier {
         cliente.servicioId = servicioId;
         cliente.servicioNombre = servicioNombre;
         notifyListeners();
+        // La fecha pudo haber cambiado: solo tiene sentido reprogramar
+        // el recordatorio si el trabajo sigue pendiente.
+        if (cliente.estado == EstadoTrabajo.pendiente) {
+          await NotificationService.instance
+              .programarRecordatoriosTrabajo(cliente);
+        }
       }
     } catch (e) {
       debugPrint('Error actualizando cliente: $e');
@@ -131,6 +163,13 @@ class CustomerService extends ChangeNotifier {
       if (cliente != null) {
         cliente.estado = EstadoTrabajo.realizado;
         notifyListeners();
+        // Ya no aplican los recordatorios de "trabajo agendado" y en
+        // cambio arrancan los avisos de cobro pendiente.
+        await NotificationService.instance
+            .cancelarRecordatoriosTrabajo(cliente.id);
+        await NotificationService.instance.avisarCobroPendiente(cliente);
+        await NotificationService.instance
+            .iniciarRecordatorioCobroSemanal(cliente);
       }
     } catch (e) {
       debugPrint('Error marcando trabajo como realizado: $e');
@@ -161,6 +200,10 @@ class CustomerService extends ChangeNotifier {
         cliente.fechaPago = fechaPago;
         cliente.financeEntryId = financeEntryId;
         notifyListeners();
+        await NotificationService.instance.avisarCobroRegistrado(cliente);
+        // Ya se cobró: se acabó el recordatorio semanal.
+        await NotificationService.instance
+            .detenerRecordatorioCobroSemanal(cliente.id);
       }
     } catch (e) {
       debugPrint('Error marcando trabajo como pagado: $e');
@@ -187,6 +230,10 @@ class CustomerService extends ChangeNotifier {
         cliente.fechaPago = null;
         cliente.financeEntryId = null;
         notifyListeners();
+        // Vuelve a quedar pendiente de cobro: reactiva ambos avisos.
+        await NotificationService.instance.avisarCobroPendiente(cliente);
+        await NotificationService.instance
+            .iniciarRecordatorioCobroSemanal(cliente);
       }
     } catch (e) {
       debugPrint('Error revirtiendo cobro: $e');
@@ -199,6 +246,7 @@ class CustomerService extends ChangeNotifier {
       await _client.from(_tabla).delete().eq('id', id);
       _customers.removeWhere((c) => c.id == id);
       notifyListeners();
+      await NotificationService.instance.cancelarTodoDeCliente(id);
     } catch (e) {
       debugPrint('Error eliminando cliente: $e');
       rethrow;

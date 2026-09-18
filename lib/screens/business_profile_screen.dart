@@ -1,11 +1,47 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../services/business_profile_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/business_logo.dart';
 import '../widgets/theme_toggle_button.dart';
 
+/// Una opción de color de marca dentro de la paleta que se ofrece en
+/// esta pantalla.
+class _OpcionColor {
+  final String etiqueta;
+  final Color color;
+
+  /// Hex a guardar. Null = usar el verde por defecto de Green Garden
+  /// (es decir, "restablecer" el color de marca).
+  final String? hex;
+
+  const _OpcionColor({required this.etiqueta, required this.color, this.hex});
+}
+
+const List<_OpcionColor> _paletaColores = [
+  _OpcionColor(
+    etiqueta: 'Green Garden (por defecto)',
+    color: AppColors.darkGreen,
+    hex: null,
+  ),
+  _OpcionColor(etiqueta: 'Verde bosque', color: Color(0xFF2E7D32), hex: '#2E7D32'),
+  _OpcionColor(etiqueta: 'Verde azulado', color: Color(0xFF00695C), hex: '#00695C'),
+  _OpcionColor(etiqueta: 'Azul', color: Color(0xFF0D47A1), hex: '#0D47A1'),
+  _OpcionColor(etiqueta: 'Morado', color: Color(0xFF4527A0), hex: '#4527A0'),
+  _OpcionColor(etiqueta: 'Rosa', color: Color(0xFFAD1457), hex: '#AD1457'),
+  _OpcionColor(etiqueta: 'Rojo', color: Color(0xFFB71C1C), hex: '#B71C1C'),
+  _OpcionColor(etiqueta: 'Naranja', color: Color(0xFFE65100), hex: '#E65100'),
+  _OpcionColor(etiqueta: 'Mostaza', color: Color(0xFFF9A825), hex: '#F9A825'),
+  _OpcionColor(etiqueta: 'Tierra', color: Color(0xFF3E2723), hex: '#3E2723'),
+  _OpcionColor(etiqueta: 'Gris azulado', color: Color(0xFF455A64), hex: '#455A64'),
+  _OpcionColor(etiqueta: 'Negro', color: Color(0xFF212121), hex: '#212121'),
+];
+
 /// Pantalla para editar los datos del negocio (nombre comercial,
-/// operador, teléfono, correo) que aparecen en el encabezado de cada
-/// factura generada.
+/// operador, teléfono, correo), y también su marca visual: el logo
+/// que reemplaza la hoja por defecto en el login y el navbar, y el
+/// color con el que se pinta toda la app.
 class BusinessProfileScreen extends StatefulWidget {
   final BusinessProfileService service;
 
@@ -22,6 +58,12 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
   late final TextEditingController _telefonoCtrl;
   late final TextEditingController _correoCtrl;
   bool _guardando = false;
+  bool _subiendoLogo = false;
+
+  /// Color de marca elegido en esta pantalla (en hex). Se guarda junto
+  /// con el resto del formulario, al presionar "Guardar". Null =
+  /// verde por defecto de Green Garden.
+  String? _colorSeleccionado;
 
   @override
   void initState() {
@@ -31,6 +73,7 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
     _operadorCtrl = TextEditingController(text: perfil.operador);
     _telefonoCtrl = TextEditingController(text: perfil.telefono);
     _correoCtrl = TextEditingController(text: perfil.correo);
+    _colorSeleccionado = perfil.colorPrimario;
   }
 
   @override
@@ -40,6 +83,47 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
     _telefonoCtrl.dispose();
     _correoCtrl.dispose();
     super.dispose();
+  }
+
+  /// Abre la galería para elegir un logo nuevo, lo sube a Supabase
+  /// Storage y guarda el perfil de inmediato con la nueva URL (a
+  /// diferencia del color, que se guarda junto con el resto del
+  /// formulario, subir un logo ya es una acción explícita y completa
+  /// por sí sola).
+  Future<void> _cambiarLogo() async {
+    final XFile? imagen = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 85,
+    );
+    if (imagen == null) return;
+
+    setState(() => _subiendoLogo = true);
+    try {
+      final url = await widget.service.subirLogo(imagen);
+      await widget.service.guardar(
+        nombreComercial: _nombreCtrl.text.trim(),
+        operador: _operadorCtrl.text.trim(),
+        telefono: _telefonoCtrl.text.trim(),
+        correo: _correoCtrl.text.trim(),
+        logoUrl: url,
+        colorPrimario: _colorSeleccionado,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Logo actualizado')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo subir el logo. Intenta de nuevo.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _subiendoLogo = false);
+    }
   }
 
   Future<void> _guardar() async {
@@ -52,6 +136,8 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
         operador: _operadorCtrl.text.trim(),
         telefono: _telefonoCtrl.text.trim(),
         correo: _correoCtrl.text.trim(),
+        logoUrl: widget.service.perfil.logoUrl,
+        colorPrimario: _colorSeleccionado,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -69,6 +155,94 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
     }
   }
 
+  Widget _seccionLogo() {
+    return ListenableBuilder(
+      listenable: widget.service,
+      builder: (context, _) {
+        return Column(
+          children: [
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                CircleAvatar(
+                  radius: 48,
+                  backgroundColor:
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                  child: BusinessLogo(
+                    logoUrl: widget.service.perfil.logoUrl,
+                    size: 72,
+                    iconoPorDefecto: Icons.eco,
+                  ),
+                ),
+                if (_subiendoLogo)
+                  const CircularProgressIndicator(strokeWidth: 2),
+              ],
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _subiendoLogo ? null : _cambiarLogo,
+              icon: const Icon(Icons.image_outlined),
+              label: Text(
+                widget.service.perfil.logoUrl == null
+                    ? 'Subir logo'
+                    : 'Cambiar logo',
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _seccionColor() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Color de marca',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Se usa en toda la app. El color se ajusta automáticamente '
+          'para verse bien tanto en modo claro como oscuro.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: _paletaColores.map((opcion) {
+            final seleccionado = _colorSeleccionado == opcion.hex;
+            return Tooltip(
+              message: opcion.etiqueta,
+              child: GestureDetector(
+                onTap: () => setState(() => _colorSeleccionado = opcion.hex),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: opcion.color,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: seleccionado
+                          ? Theme.of(context).colorScheme.onSurface
+                          : Colors.transparent,
+                      width: 3,
+                    ),
+                  ),
+                  child: seleccionado
+                      ? const Icon(Icons.check, color: Colors.white, size: 20)
+                      : null,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -83,6 +257,14 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              _seccionLogo(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              _seccionColor(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
               Text(
                 'Estos datos aparecen en el encabezado de cada factura que generes.',
                 style: Theme.of(context).textTheme.bodyMedium,

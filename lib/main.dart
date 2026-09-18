@@ -9,6 +9,7 @@ import 'screens/customer_screen.dart';
 import 'screens/finance_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/services_screen.dart';
+import 'services/brand_cache.dart';
 import 'services/business_profile_service.dart';
 import 'services/customer_service.dart';
 import 'services/finance_service.dart';
@@ -19,6 +20,8 @@ import 'services/service_catalog_service.dart';
 import 'supabase/supabase_config.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import 'utils/color_utils.dart';
+import 'widgets/business_logo.dart';
 import 'widgets/theme_toggle_button.dart';
 
 Future<void> main() async {
@@ -37,6 +40,14 @@ Future<void> main() async {
   // datos que ya vienen de Supabase.
   await NotificationService.instance.inicializar();
 
+  // Carga el último logo/color de marca conocidos en este teléfono,
+  // para que ya se vean correctamente desde la pantalla de login,
+  // antes incluso de que haya una sesión activa.
+  await BrandCache.instance.cargar();
+  ThemeController.instance.actualizarColorMarca(
+    colorFromHex(BrandCache.instance.colorHex),
+  );
+
   runApp(const MyApp());
 }
 
@@ -45,8 +56,9 @@ Future<void> main() async {
 /// Aquí es donde se instancian los servicios (la capa que en esta
 /// arquitectura funciona como microservicios internos: inventario,
 /// clientes, finanzas, catálogo de servicios, y a futuro otros
-/// módulos), respaldados por Supabase. El tema claro/oscuro no vive en
-/// este widget: se maneja de forma global en [ThemeController].
+/// módulos), respaldados por Supabase. El tema claro/oscuro y el color
+/// de marca no viven en este widget: se manejan de forma global en
+/// [ThemeController].
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -69,24 +81,29 @@ class _MyAppState extends State<MyApp> {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: ThemeController.instance.modeNotifier,
       builder: (context, themeMode, _) {
-        return MaterialApp(
-          title: 'Green Garden',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.light,
-          darkTheme: AppTheme.dark,
-          themeMode: themeMode,
-          // AuthGate decide si mostrar el login o el dashboard según
-          // haya o no una sesión activa de Supabase, y se encarga de
-          // cargar/limpiar los datos de cada servicio en el momento
-          // correcto.
-          home: AuthGate(
-            inventoryService: _inventoryService,
-            customerService: _customerService,
-            financeService: _financeService,
-            serviceCatalogService: _serviceCatalogService,
-            businessProfileService: _businessProfileService,
-            invoiceService: _invoiceService,
-          ),
+        return ValueListenableBuilder<Color?>(
+          valueListenable: ThemeController.instance.colorMarcaNotifier,
+          builder: (context, colorMarca, __) {
+            return MaterialApp(
+              title: 'Green Garden',
+              debugShowCheckedModeBanner: false,
+              theme: AppTheme.light(colorMarca),
+              darkTheme: AppTheme.dark(colorMarca),
+              themeMode: themeMode,
+              // AuthGate decide si mostrar el login o el dashboard según
+              // haya o no una sesión activa de Supabase, y se encarga de
+              // cargar/limpiar los datos de cada servicio en el momento
+              // correcto.
+              home: AuthGate(
+                inventoryService: _inventoryService,
+                customerService: _customerService,
+                financeService: _financeService,
+                serviceCatalogService: _serviceCatalogService,
+                businessProfileService: _businessProfileService,
+                invoiceService: _invoiceService,
+              ),
+            );
+          },
         );
       },
     );
@@ -232,6 +249,18 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: Padding(
+          padding: const EdgeInsets.all(10),
+          child: ListenableBuilder(
+            listenable: businessProfileService,
+            builder: (context, _) => BusinessLogo(
+              logoUrl: businessProfileService.perfil.logoUrl,
+              size: 28,
+              iconoPorDefecto: Icons.eco,
+              colorIcono: Theme.of(context).appBarTheme.foregroundColor,
+            ),
+          ),
+        ),
         title: const Text('Green Garden'),
         actions: [
           const ThemeToggleButton(),

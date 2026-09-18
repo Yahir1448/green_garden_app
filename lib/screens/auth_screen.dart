@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/brand_cache.dart';
 import '../theme/app_theme.dart';
+import '../widgets/business_logo.dart';
 
 /// Pantalla de acceso: permite iniciar sesión o crear una cuenta nueva
 /// con correo y contraseña usando Supabase Auth. Cada cuenta ve
@@ -141,10 +143,14 @@ class _AuthScreenState extends State<AuthScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(
-                      Icons.eco,
+                    // Logo del negocio, si ya se configuró uno en "Mi
+                    // negocio" (cacheado localmente en este teléfono);
+                    // si no, se muestra la hoja por defecto.
+                    BusinessLogo(
+                      logoUrl: BrandCache.instance.logoUrl,
                       size: 64,
-                      color: AppColors.darkGreen,
+                      iconoPorDefecto: Icons.eco,
+                      colorIcono: AppColors.darkGreen,
                     ),
 
                     const SizedBox(height: 12),

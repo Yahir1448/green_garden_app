@@ -32,7 +32,7 @@ Future<void> main() async {
   // la app.
   await Supabase.initialize(
     url: SupabaseConfig.supabaseUrl,
-    anonKey: SupabaseConfig.supabaseAnonKey,
+    publishableKey: SupabaseConfig.supabaseAnonKey,
   );
 
   // Notificaciones locales (stock bajo, trabajos agendados, cobros y
@@ -83,7 +83,7 @@ class _MyAppState extends State<MyApp> {
       builder: (context, themeMode, _) {
         return ValueListenableBuilder<Color?>(
           valueListenable: ThemeController.instance.colorMarcaNotifier,
-          builder: (context, colorMarca, __) {
+          builder: (context, colorMarca, _) {
             return MaterialApp(
               title: 'Green Garden',
               debugShowCheckedModeBanner: false,

@@ -68,15 +68,14 @@ class _FinanceScreenState extends State<FinanceScreen>
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () async {
               final navigator = Navigator.of(context);
+              final mensajero = ScaffoldMessenger.of(context);
               try {
                 await widget.service.eliminarMovimiento(entry.id);
                 navigator.pop();
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
-                  );
-                }
+                mensajero.showSnackBar(
+                  const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
+                );
               }
             },
             child: const Text('Eliminar'),
@@ -109,31 +108,26 @@ class _FinanceScreenState extends State<FinanceScreen>
       body: ListenableBuilder(
         listenable: widget.service,
         builder: (context, _) {
-          return Column(
+          return TabBarView(
+            controller: _tabController,
             children: [
-              _ResumenBalance(service: widget.service),
-              FinanceChart(service: widget.service),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _ListaMovimientos(
-                      entries: widget.service.entries,
-                      onTap: (e) => _abrirFormulario(entry: e),
-                      onDelete: _confirmarEliminar,
-                    ),
-                    _ListaMovimientos(
-                      entries: widget.service.porTipo(TipoMovimiento.ingreso),
-                      onTap: (e) => _abrirFormulario(entry: e),
-                      onDelete: _confirmarEliminar,
-                    ),
-                    _ListaMovimientos(
-                      entries: widget.service.porTipo(TipoMovimiento.egreso),
-                      onTap: (e) => _abrirFormulario(entry: e),
-                      onDelete: _confirmarEliminar,
-                    ),
-                  ],
-                ),
+              _ListaMovimientos(
+                service: widget.service,
+                entries: widget.service.entries,
+                onTap: (e) => _abrirFormulario(entry: e),
+                onDelete: _confirmarEliminar,
+              ),
+              _ListaMovimientos(
+                service: widget.service,
+                entries: widget.service.porTipo(TipoMovimiento.ingreso),
+                onTap: (e) => _abrirFormulario(entry: e),
+                onDelete: _confirmarEliminar,
+              ),
+              _ListaMovimientos(
+                service: widget.service,
+                entries: widget.service.porTipo(TipoMovimiento.egreso),
+                onTap: (e) => _abrirFormulario(entry: e),
+                onDelete: _confirmarEliminar,
               ),
             ],
           );
@@ -241,12 +235,18 @@ class _MiniResumenCard extends StatelessWidget {
   }
 }
 
+/// Lista de movimientos de una pestaña. Incluye, como parte del mismo
+/// scroll, el resumen de balance y la gráfica arriba de todo — así,
+/// al desplazarse hacia abajo para ver el historial, la gráfica se
+/// desliza junto con el resto en vez de quedar fija ocupando espacio.
 class _ListaMovimientos extends StatelessWidget {
+  final FinanceService service;
   final List<FinanceEntry> entries;
   final ValueChanged<FinanceEntry> onTap;
   final ValueChanged<FinanceEntry> onDelete;
 
   const _ListaMovimientos({
+    required this.service,
     required this.entries,
     required this.onTap,
     required this.onDelete,
@@ -258,63 +258,84 @@ class _ListaMovimientos extends StatelessWidget {
     return '$dia/$mes/${fecha.year}';
   }
 
+  Widget _encabezado() {
+    return Column(
+      children: [
+        _ResumenBalance(service: service),
+        FinanceChart(service: service),
+      ],
+    );
+  }
+
+  Widget _tarjetaMovimiento(BuildContext context, FinanceEntry entry) {
+    final esIngreso = entry.tipo == TipoMovimiento.ingreso;
+    final color = esIngreso ? AppColors.darkGreen : Colors.redAccent;
+    final signo = esIngreso ? '+' : '-';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        onTap: () => onTap(entry),
+        leading: CircleAvatar(
+          backgroundColor: (esIngreso ? AppColors.limeGreen : Colors.redAccent)
+              .withValues(alpha: 0.2),
+          child: Icon(
+            esIngreso ? Icons.arrow_upward : Icons.arrow_downward,
+            color: color,
+          ),
+        ),
+        title: Text(entry.descripcion),
+        subtitle: Text(
+          entry.categoria.isNotEmpty
+              ? '${entry.categoria} • ${_formatearFecha(entry.fecha)}'
+              : _formatearFecha(entry.fecha),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$signo\$${entry.monto.toStringAsFixed(2)}',
+              style: TextStyle(fontWeight: FontWeight.bold, color: color),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 20),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () => onDelete(entry),
+              tooltip: 'Eliminar',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (entries.isEmpty) {
-      return Center(
-        child: Text(
-          'No hay movimientos registrados aquí todavía.',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-      );
-    }
+    // +1 por el encabezado (resumen + gráfica). Si no hay movimientos
+    // igual se muestra el encabezado, seguido del mensaje vacío.
+    final itemCount = entries.isEmpty ? 2 : entries.length + 1;
 
     return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: entries.length,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 96),
+      itemCount: itemCount,
       itemBuilder: (context, index) {
-        final entry = entries[index];
-        final esIngreso = entry.tipo == TipoMovimiento.ingreso;
-        final color = esIngreso ? AppColors.darkGreen : Colors.redAccent;
-        final signo = esIngreso ? '+' : '-';
+        if (index == 0) return _encabezado();
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 10),
-          child: ListTile(
-            onTap: () => onTap(entry),
-            leading: CircleAvatar(
-              backgroundColor: (esIngreso ? AppColors.limeGreen : Colors.redAccent)
-                  .withValues(alpha: 0.2),
-              child: Icon(
-                esIngreso ? Icons.arrow_upward : Icons.arrow_downward,
-                color: color,
+        if (entries.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 40),
+            child: Center(
+              child: Text(
+                'No hay movimientos registrados aquí todavía.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-            title: Text(entry.descripcion),
-            subtitle: Text(
-              entry.categoria.isNotEmpty
-                  ? '${entry.categoria} • ${_formatearFecha(entry.fecha)}'
-                  : _formatearFecha(entry.fecha),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$signo\$${entry.monto.toStringAsFixed(2)}',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: color),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: () => onDelete(entry),
-                  tooltip: 'Eliminar',
-                ),
-              ],
-            ),
-          ),
-        );
+          );
+        }
+
+        return _tarjetaMovimiento(context, entries[index - 1]);
       },
     );
   }

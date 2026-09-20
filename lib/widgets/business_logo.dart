@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
 /// Muestra el logo del negocio (desde una URL) o, si no hay logo
-/// configurado todavía, un ícono por defecto. Se usa en la pantalla de
-/// login/registro, en el navbar del dashboard y en "Mi negocio".
+/// configurado todavía, un ícono por defecto.
+///
+/// [size] es un límite MÁXIMO de ancho y alto: el logo nunca lo supera
+/// (evita que una imagen muy grande deforme la pantalla), pero se
+/// muestra completo y sin recortar, cualquiera sea su proporción
+/// original (con [BoxFit.contain], no [BoxFit.cover]).
 class BusinessLogo extends StatelessWidget {
   final String? logoUrl;
   final double size;
@@ -29,13 +33,12 @@ class BusinessLogo extends StatelessWidget {
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(size / 4),
+    return SizedBox(
+      width: size,
+      height: size,
       child: Image.network(
         url,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorBuilder: (context, error, stackTrace) => Icon(
           iconoPorDefecto,
           size: size,
@@ -43,15 +46,11 @@ class BusinessLogo extends StatelessWidget {
         ),
         loadingBuilder: (context, child, progreso) {
           if (progreso == null) return child;
-          return SizedBox(
-            width: size,
-            height: size,
-            child: const Center(
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+          return Center(
+            child: SizedBox(
+              width: size * 0.4,
+              height: size * 0.4,
+              child: const CircularProgressIndicator(strokeWidth: 2),
             ),
           );
         },

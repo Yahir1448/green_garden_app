@@ -56,15 +56,14 @@ class _ServicesScreenState extends State<ServicesScreen> {
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () async {
               final navigator = Navigator.of(context);
+              final mensajero = ScaffoldMessenger.of(context);
               try {
                 await widget.service.eliminarServicio(servicio.id);
                 navigator.pop();
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
-                  );
-                }
+                mensajero.showSnackBar(
+                  const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
+                );
               }
             },
             child: const Text('Eliminar'),

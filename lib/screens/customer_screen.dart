@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 
-import '../models/business_profile.dart';
 import '../models/customer.dart';
 import '../models/finance_entry.dart';
 import '../models/service_item.dart';
@@ -92,6 +91,7 @@ class _CustomerScreenState extends State<CustomerScreen>
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () async {
               final navigator = Navigator.of(context);
+              final mensajero = ScaffoldMessenger.of(context);
               try {
                 // Si este trabajo ya tenía un cobro registrado en
                 // Finanzas, lo eliminamos también para no dejar un
@@ -102,11 +102,9 @@ class _CustomerScreenState extends State<CustomerScreen>
                 await widget.service.eliminarCliente(cliente.id);
                 navigator.pop();
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
-                  );
-                }
+                mensajero.showSnackBar(
+                  const SnackBar(content: Text('No se pudo eliminar. Intenta de nuevo.')),
+                );
               }
             },
             child: const Text('Eliminar'),
@@ -373,7 +371,7 @@ class _ListaClientes extends StatelessWidget {
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
       itemCount: clientes.length,
       itemBuilder: (context, index) {
         final cliente = clientes[index];

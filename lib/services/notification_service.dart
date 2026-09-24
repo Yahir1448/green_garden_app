@@ -12,19 +12,25 @@ import '../models/inventory_item.dart';
 /// Servicio centralizado de notificaciones locales de Green Garden.
 ///
 /// Es un singleton para que cualquier servicio (Inventario, Clientes,
-/// Facturas) pueda disparar avisos sin depender de un widget en pantalla.
+/// Facturas) pueda disparar avisos sin depender de un widget en
+/// pantalla. Todo corre en el propio teléfono del usuario: no se usa
+/// ningún servidor ni servicio push externo.
 ///
-/// Todo corre en el propio teléfono del usuario: no se usa ningún
-/// servidor ni servicio push externo.
+/// Los recordatorios programados con [zonedSchedule] los dispara el
+/// propio sistema operativo (AlarmManager en Android, Notification
+/// Center en iOS), así que llegan aunque la app esté completamente
+/// cerrada.
 ///
 /// Avisos que genera:
 /// - Stock bajo en inventario.
 /// - Recordatorio de un trabajo agendado: 2 días antes, 1 día antes
 ///   y el mismo día.
-/// - Cobro pendiente.
-/// - Recordatorio recurrente cada 7 días mientras siga sin cobrarse.
+/// - Cobro pendiente, más un recordatorio recurrente cada 7 días
+///   mientras siga sin cobrarse.
 /// - Confirmación cuando un cobro queda registrado.
 /// - Confirmación cuando se genera una factura.
+/// - Confirmación cuando se genera automáticamente el siguiente
+///   trabajo de una serie recurrente.
 class NotificationService {
   NotificationService._();
 
@@ -99,8 +105,7 @@ class NotificationService {
   static const List<int> _etapasRecordatorioTrabajo = [2, 1, 0];
 
   /// Cada cuánto se repite el recordatorio de un cobro pendiente.
-  static const Duration _intervaloRecordatorioCobro =
-      Duration(days: 7);
+  static const Duration _intervaloRecordatorioCobro = Duration(days: 7);
 
   /// Artículos por los que ya se avisó que están bajos de stock.
   final Set<String> _stockAvisado = {};
@@ -141,9 +146,8 @@ class NotificationService {
       settings: configuracion,
     );
 
-    final androidImpl =
-        _plugin.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+    final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
 
     if (androidImpl != null) {
       await androidImpl.createNotificationChannel(_canalGeneral);
@@ -159,9 +163,8 @@ class NotificationService {
   /// Pide permiso de notificaciones.
   Future<bool> solicitarPermisos() async {
     if (Platform.isIOS || Platform.isMacOS) {
-      final iosImpl =
-          _plugin.resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>();
+      final iosImpl = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
 
       final resultado = await iosImpl?.requestPermissions(
         alert: true,
@@ -173,9 +176,8 @@ class NotificationService {
     }
 
     if (Platform.isAndroid) {
-      final androidImpl =
-          _plugin.resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
 
       final permitido =
           await androidImpl?.requestNotificationsPermission() ?? false;
@@ -190,8 +192,7 @@ class NotificationService {
   // Inventario: stock bajo
   // ---------------------------------------------------------------
 
-  int _idStock(String itemId) =>
-      ('stock_$itemId').hashCode & 0x7fffffff;
+  int _idStock(String itemId) => ('stock_$itemId').hashCode & 0x7fffffff;
 
   /// Revisa un artículo y avisa si está en o por debajo del stock mínimo.
   Future<void> revisarStockBajo(InventoryItem item) async {
@@ -282,16 +283,14 @@ class NotificationService {
 
       await _plugin.zonedSchedule(
         id: _idTrabajo(cliente.id, diasAntes),
-        title:
-            '${_tituloEtapa(diasAntes)}: ${cliente.nombre}',
+        title: '${_tituloEtapa(diasAntes)}: ${cliente.nombre}',
         body:
             'Trabajo$servicio$lugar el '
             '${cliente.fecha.day.toString().padLeft(2, '0')}/'
             '${cliente.fecha.month.toString().padLeft(2, '0')}.',
         scheduledDate: horario,
         notificationDetails: _detallesTrabajos,
-        androidScheduleMode:
-            AndroidScheduleMode.inexactAllowWhileIdle,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       );
     }
   }
@@ -348,25 +347,21 @@ class NotificationService {
   ) async {
     await detenerRecordatorioCobroSemanal(cliente.id);
 
-    final primeraOcurrencia =
-        tz.TZDateTime.now(tz.local).add(
-          _intervaloRecordatorioCobro,
-        );
+    final primeraOcurrencia = tz.TZDateTime.now(tz.local).add(
+      _intervaloRecordatorioCobro,
+    );
 
     await _plugin.zonedSchedule(
       id: _idCobroSemanal(cliente.id),
-      title:
-          'Sigue pendiente el cobro: ${cliente.nombre}',
+      title: 'Sigue pendiente el cobro: ${cliente.nombre}',
       body:
           'Aún no se ha cobrado '
           '\$${cliente.precio.toStringAsFixed(2)} '
           'de este trabajo.',
       scheduledDate: primeraOcurrencia,
       notificationDetails: _detallesTrabajos,
-      androidScheduleMode:
-          AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents:
-          DateTimeComponents.dayOfWeekAndTime,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
     );
   }
 
@@ -399,6 +394,26 @@ class NotificationService {
   Future<void> cancelarAvisoCobro(String clienteId) async {
     await _plugin.cancel(
       id: _idCobroInmediato(clienteId),
+    );
+  }
+
+  // ---------------------------------------------------------------
+  // Clientes: servicios recurrentes
+  // ---------------------------------------------------------------
+
+  /// Aviso de confirmación cuando se genera automáticamente el
+  /// siguiente trabajo de una serie recurrente.
+  Future<void> avisarTrabajoRecurrenteGenerado(Customer nuevo) async {
+    final dia = nuevo.fecha.day.toString().padLeft(2, '0');
+    final mes = nuevo.fecha.month.toString().padLeft(2, '0');
+
+    await _plugin.show(
+      // Rango propio (2,000,000+) para no chocar con los otros ids,
+      // que se generan por hashCode.
+      id: 2000000 + (nuevo.id.hashCode & 0xfffff),
+      title: 'Siguiente trabajo agendado: ${nuevo.nombre}',
+      body: 'Se generó automáticamente para el $dia/$mes, por ser recurrente.',
+      notificationDetails: _detallesGeneral,
     );
   }
 

@@ -192,6 +192,15 @@ class _CustomerScreenState extends State<CustomerScreen>
   }
 
   Future<void> _generarFactura(Customer cliente) async {
+    if (cliente.estado != EstadoTrabajo.pagado) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Solo se puede generar la factura de un trabajo ya pagado.'),
+        ),
+      );
+      return;
+    }
+
     final perfil = widget.businessProfileService.perfil;
 
     if (!perfil.estaCompleto) {
@@ -257,6 +266,26 @@ class _CustomerScreenState extends State<CustomerScreen>
     return '$dia/$mes/${fecha.year}';
   }
 
+  /// Abre el historial de todos los trabajos de la serie recurrente a
+  /// la que pertenece [cliente] (o solo el trabajo en sí, si nunca fue
+  /// recurrente).
+  void _verHistorial(Customer cliente) {
+    final historial = widget.service.historialDe(cliente);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => _HistorialClienteSheet(
+        nombreCliente: cliente.nombre,
+        historial: historial,
+        formatearFecha: _formatearFecha,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -292,6 +321,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
                 onGenerarFactura: _generarFactura,
+                onVerHistorial: _verHistorial,
               ),
               _ListaClientes(
                 clientes: widget.service.porEstado(EstadoTrabajo.realizado),
@@ -302,6 +332,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
                 onGenerarFactura: _generarFactura,
+                onVerHistorial: _verHistorial,
               ),
               _ListaClientes(
                 clientes: widget.service.porEstado(EstadoTrabajo.pagado),
@@ -312,6 +343,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
                 onGenerarFactura: _generarFactura,
+                onVerHistorial: _verHistorial,
               ),
             ],
           );
@@ -335,6 +367,7 @@ class _ListaClientes extends StatelessWidget {
   final ValueChanged<Customer> onCobrar;
   final ValueChanged<Customer> onDeshacerCobro;
   final ValueChanged<Customer> onGenerarFactura;
+  final ValueChanged<Customer> onVerHistorial;
 
   const _ListaClientes({
     required this.clientes,
@@ -345,6 +378,7 @@ class _ListaClientes extends StatelessWidget {
     required this.onCobrar,
     required this.onDeshacerCobro,
     required this.onGenerarFactura,
+    required this.onVerHistorial,
   });
 
   Color _colorEstado(EstadoTrabajo estado) {
@@ -413,13 +447,23 @@ class _ListaClientes extends StatelessWidget {
                         '\$${cliente.precio.toStringAsFixed(2)}',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
+                      if (cliente.estado == EstadoTrabajo.pagado) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.receipt_long_outlined, size: 20),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => onGenerarFactura(cliente),
+                          tooltip: 'Generar factura',
+                        ),
+                      ],
                       const SizedBox(width: 4),
                       IconButton(
-                        icon: const Icon(Icons.receipt_long_outlined, size: 20),
+                        icon: const Icon(Icons.history, size: 20),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
-                        onPressed: () => onGenerarFactura(cliente),
-                        tooltip: 'Generar factura',
+                        onPressed: () => onVerHistorial(cliente),
+                        tooltip: 'Historial de este cliente',
                       ),
                       const SizedBox(width: 4),
                       IconButton(
@@ -443,6 +487,15 @@ class _ListaClientes extends StatelessWidget {
                         visualDensity: VisualDensity.compact,
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
+                      if (cliente.recurrencia != null) ...[
+                        const SizedBox(width: 6),
+                        Chip(
+                          avatar: const Icon(Icons.repeat, size: 14),
+                          label: Text(cliente.recurrencia!.label),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ],
                       const Spacer(),
                       if (cliente.estado == EstadoTrabajo.pendiente)
                         TextButton.icon(
@@ -474,6 +527,109 @@ class _ListaClientes extends StatelessWidget {
   }
 }
 
+/// Hoja que muestra el historial de trabajos de un cliente (todos los
+/// de su misma serie recurrente, o solo él si nunca fue recurrente),
+/// del más reciente al más antiguo.
+class _HistorialClienteSheet extends StatelessWidget {
+  final String nombreCliente;
+  final List<Customer> historial;
+  final String Function(DateTime) formatearFecha;
+
+  const _HistorialClienteSheet({
+    required this.nombreCliente,
+    required this.historial,
+    required this.formatearFecha,
+  });
+
+  Color _colorEstado(EstadoTrabajo estado) {
+    switch (estado) {
+      case EstadoTrabajo.pendiente:
+        return Colors.orange;
+      case EstadoTrabajo.realizado:
+        return Colors.blueGrey;
+      case EstadoTrabajo.pagado:
+        return AppColors.darkGreen;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: AppColors.limeGreenSoft,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+            Text(
+              'Historial de $nombreCliente',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              historial.length == 1
+                  ? '1 trabajo registrado'
+                  : '${historial.length} trabajos registrados',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: historial.length,
+                itemBuilder: (context, index) {
+                  final trabajo = historial[index];
+                  final color = _colorEstado(trabajo.estado);
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: color.withValues(alpha: 0.2),
+                        child: Icon(Icons.work_outline, color: color),
+                      ),
+                      title: Text(formatearFecha(trabajo.fecha)),
+                      subtitle: Text(
+                        trabajo.servicioNombre.isNotEmpty
+                            ? '${trabajo.servicioNombre} • ${trabajo.lugar}'
+                            : trabajo.lugar,
+                      ),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            '\$${trabajo.precio.toStringAsFixed(2)}',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            trabajo.estado.label,
+                            style: TextStyle(color: color, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Formulario para crear o editar un cliente.
 class _CustomerFormSheet extends StatefulWidget {
   final CustomerService service;
@@ -490,15 +646,47 @@ class _CustomerFormSheet extends StatefulWidget {
   State<_CustomerFormSheet> createState() => _CustomerFormSheetState();
 }
 
+/// Una fila del formulario: un servicio agendado en edición. Si
+/// [servicioId] es null, la fila está en modo "Personalizado" y el
+/// nombre se escribe a mano en [nombreCtrl]; si no, el nombre viene
+/// del catálogo y [nombreCtrl] solo se usa para mostrarlo/enviarlo.
+class _FilaServicio {
+  String? servicioId;
+  final TextEditingController nombreCtrl;
+  final TextEditingController precioCtrl;
+
+  _FilaServicio({
+    this.servicioId,
+    String nombreInicial = '',
+    String precioInicial = '',
+  })  : nombreCtrl = TextEditingController(text: nombreInicial),
+        precioCtrl = TextEditingController(text: precioInicial);
+
+  void dispose() {
+    nombreCtrl.dispose();
+    precioCtrl.dispose();
+  }
+}
+
 class _CustomerFormSheetState extends State<_CustomerFormSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nombreCtrl;
   late final TextEditingController _lugarCtrl;
-  late final TextEditingController _precioCtrl;
   late DateTime _fecha;
-  String? _servicioIdSeleccionado;
+  final List<_FilaServicio> _filas = [];
+  bool _esRecurrente = false;
+  Recurrencia _recurrencia = Recurrencia.mensual;
 
   bool get _esEdicion => widget.cliente != null;
+
+  /// Suma en vivo de los precios de todas las filas.
+  double get _total {
+    double suma = 0;
+    for (final fila in _filas) {
+      suma += double.tryParse(fila.precioCtrl.text.trim()) ?? 0;
+    }
+    return suma;
+  }
 
   @override
   void initState() {
@@ -506,18 +694,30 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
     final cliente = widget.cliente;
     _nombreCtrl = TextEditingController(text: cliente?.nombre ?? '');
     _lugarCtrl = TextEditingController(text: cliente?.lugar ?? '');
-    _precioCtrl = TextEditingController(
-      text: cliente != null ? cliente.precio.toString() : '',
-    );
     _fecha = cliente?.fecha ?? DateTime.now();
-    _servicioIdSeleccionado = cliente?.servicioId;
+    _esRecurrente = cliente?.recurrencia != null;
+    _recurrencia = cliente?.recurrencia ?? Recurrencia.mensual;
+
+    if (cliente != null && cliente.servicios.isNotEmpty) {
+      for (final s in cliente.servicios) {
+        _agregarFila(
+          servicioId: s.servicioId,
+          nombreInicial: s.nombre,
+          precioInicial: s.precio.toString(),
+        );
+      }
+    } else {
+      _agregarFila();
+    }
   }
 
   @override
   void dispose() {
     _nombreCtrl.dispose();
     _lugarCtrl.dispose();
-    _precioCtrl.dispose();
+    for (final fila in _filas) {
+      fila.dispose();
+    }
     super.dispose();
   }
 
@@ -533,14 +733,51 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
     }
   }
 
-  void _seleccionarServicio(ServiceItem? servicio) {
+  /// Agrega una fila de servicio nueva (vacía, "Personalizado" por
+  /// defecto) o precargada con los valores indicados.
+  void _agregarFila({
+    String? servicioId,
+    String nombreInicial = '',
+    String precioInicial = '',
+  }) {
+    final fila = _FilaServicio(
+      servicioId: servicioId,
+      nombreInicial: nombreInicial,
+      precioInicial: precioInicial,
+    );
+    // El total mostrado depende de cada precioCtrl: nos suscribimos
+    // para recalcularlo en vivo mientras el usuario escribe.
+    fila.precioCtrl.addListener(_onCambioPrecio);
+    setState(() => _filas.add(fila));
+  }
+
+  void _eliminarFila(int index) {
+    if (_filas.length <= 1) return; // siempre queda al menos 1 fila
     setState(() {
-      _servicioIdSeleccionado = servicio?.id;
-      // Sugerimos el precio del servicio, pero el usuario puede
-      // ajustarlo libremente después (por ejemplo, si cobra distinto
-      // por distancia o tamaño del trabajo).
+      final fila = _filas.removeAt(index);
+      fila.precioCtrl.removeListener(_onCambioPrecio);
+      fila.dispose();
+    });
+  }
+
+  void _onCambioPrecio() => setState(() {});
+
+  /// Al elegir un servicio del catálogo en una fila (o "Personalizado"),
+  /// actualiza esa fila: nombre y precio sugerido si viene del
+  /// catálogo, o la limpia para que el usuario escriba el nombre a
+  /// mano si elige "Personalizado".
+  void _seleccionarServicioEnFila(int index, ServiceItem? servicio) {
+    setState(() {
+      final fila = _filas[index];
+      fila.servicioId = servicio?.id;
       if (servicio != null) {
-        _precioCtrl.text = servicio.precio.toString();
+        fila.nombreCtrl.text = servicio.nombre;
+        // Sugerimos el precio del catálogo, pero el usuario puede
+        // ajustarlo libremente después (por ejemplo, si cobra distinto
+        // por distancia o tamaño del trabajo).
+        fila.precioCtrl.text = servicio.precio.toString();
+      } else {
+        fila.nombreCtrl.clear();
       }
     });
   }
@@ -552,9 +789,18 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
 
     final nombre = _nombreCtrl.text.trim();
     final lugar = _lugarCtrl.text.trim();
-    final precio = double.parse(_precioCtrl.text.trim());
-    final servicioSeleccionado =
-        widget.serviceCatalog.buscarPorId(_servicioIdSeleccionado);
+
+    final servicios = _filas.map((fila) {
+      final nombreServicio = fila.servicioId != null
+          ? (widget.serviceCatalog.buscarPorId(fila.servicioId)?.nombre ??
+              fila.nombreCtrl.text.trim())
+          : fila.nombreCtrl.text.trim();
+      return ServicioAgendado(
+        servicioId: fila.servicioId,
+        nombre: nombreServicio,
+        precio: double.tryParse(fila.precioCtrl.text.trim()) ?? 0,
+      );
+    }).toList();
 
     setState(() => _guardando = true);
 
@@ -565,18 +811,16 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
           nombre: nombre,
           lugar: lugar,
           fecha: _fecha,
-          precio: precio,
-          servicioId: servicioSeleccionado?.id,
-          servicioNombre: servicioSeleccionado?.nombre ?? '',
+          servicios: servicios,
+          recurrencia: _esRecurrente ? _recurrencia : null,
         );
       } else {
         await widget.service.agregarCliente(
           nombre: nombre,
           lugar: lugar,
           fecha: _fecha,
-          precio: precio,
-          servicioId: servicioSeleccionado?.id,
-          servicioNombre: servicioSeleccionado?.nombre ?? '',
+          servicios: servicios,
+          recurrencia: _esRecurrente ? _recurrencia : null,
         );
       }
       if (mounted) Navigator.pop(context);
@@ -639,34 +883,6 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
                         : null,
               ),
               const SizedBox(height: 12),
-              ListenableBuilder(
-                listenable: widget.serviceCatalog,
-                builder: (context, _) {
-                  final servicios = widget.serviceCatalog.servicios;
-                  return DropdownButtonFormField<String?>(
-                    initialValue: _servicioIdSeleccionado,
-                    decoration: const InputDecoration(
-                      labelText: 'Servicio (opcional)',
-                    ),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('Sin enlazar a un servicio'),
-                      ),
-                      ...servicios.map(
-                        (s) => DropdownMenuItem<String?>(
-                          value: s.id,
-                          child: Text('${s.nombre} (\$${s.precio.toStringAsFixed(2)})'),
-                        ),
-                      ),
-                    ],
-                    onChanged: (id) => _seleccionarServicio(
-                      widget.serviceCatalog.buscarPorId(id),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
               InkWell(
                 onTap: _elegirFecha,
                 child: InputDecorator(
@@ -677,25 +893,158 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
                   child: Text(fechaTexto),
                 ),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _precioCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Precio',
-                  prefixText: '\$ ',
+              const SizedBox(height: 16),
+              Text('Servicios', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              ..._filas.asMap().entries.map((entry) {
+                final index = entry.key;
+                final fila = entry.value;
+                final esPersonalizado = fila.servicioId == null;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ListenableBuilder(
+                              listenable: widget.serviceCatalog,
+                              builder: (context, _) {
+                                final catalogo = widget.serviceCatalog.servicios;
+                                return DropdownButtonFormField<String?>(
+                                  initialValue: fila.servicioId,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Servicio',
+                                  ),
+                                  items: [
+                                    const DropdownMenuItem<String?>(
+                                      value: null,
+                                      child: Text('Personalizado'),
+                                    ),
+                                    ...catalogo.map(
+                                      (s) => DropdownMenuItem<String?>(
+                                        value: s.id,
+                                        child: Text(s.nombre),
+                                      ),
+                                    ),
+                                  ],
+                                  onChanged: (id) => _seleccionarServicioEnFila(
+                                    index,
+                                    widget.serviceCatalog.buscarPorId(id),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          if (_filas.length > 1) ...[
+                            const SizedBox(width: 4),
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline),
+                              tooltip: 'Quitar este servicio',
+                              onPressed: () => _eliminarFila(index),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (esPersonalizado) ...[
+                            Expanded(
+                              flex: 3,
+                              child: TextFormField(
+                                controller: fila.nombreCtrl,
+                                decoration: const InputDecoration(
+                                  labelText: 'Nombre del servicio',
+                                ),
+                                validator: (value) =>
+                                    (value == null || value.trim().isEmpty)
+                                        ? 'Requerido'
+                                        : null,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Expanded(
+                            flex: esPersonalizado ? 2 : 1,
+                            child: TextFormField(
+                              controller: fila.precioCtrl,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              decoration: const InputDecoration(
+                                labelText: 'Precio',
+                                prefixText: '\$ ',
+                              ),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Requerido';
+                                }
+                                if (double.tryParse(value.trim()) == null) {
+                                  return 'Número inválido';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => _agregarFila(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Agregar otro servicio'),
                 ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Requerido';
-                  }
-                  if (double.tryParse(value.trim()) == null) {
-                    return 'Número inválido';
-                  }
-                  return null;
-                },
               ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Total', style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    '\$${_total.toStringAsFixed(2)}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Servicio recurrente'),
+                subtitle: const Text(
+                  'Al marcarlo como realizado, se agenda automáticamente '
+                  'el siguiente trabajo.',
+                ),
+                value: _esRecurrente,
+                onChanged: (valor) => setState(() => _esRecurrente = valor),
+              ),
+              if (_esRecurrente) ...[
+                const SizedBox(height: 4),
+                SegmentedButton<Recurrencia>(
+                  segments: const [
+                    ButtonSegment(
+                      value: Recurrencia.semanal,
+                      label: Text('Semanal'),
+                    ),
+                    ButtonSegment(
+                      value: Recurrencia.mensual,
+                      label: Text('Mensual'),
+                    ),
+                  ],
+                  selected: {_recurrencia},
+                  onSelectionChanged: (nuevaSeleccion) {
+                    setState(() => _recurrencia = nuevaSeleccion.first);
+                  },
+                ),
+              ],
               const SizedBox(height: 20),
               FilledButton(
                 onPressed: _guardando ? null : _guardar,

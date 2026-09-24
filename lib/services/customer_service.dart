@@ -18,6 +18,10 @@ import 'notification_service.dart';
 /// atados al ciclo de vida de un cliente (se crean, se reprograman o
 /// se cancelan junto con él), sin importar desde qué pantalla se
 /// dispare la acción.
+///
+/// También maneja los trabajos recurrentes: si un cliente tiene una
+/// [Recurrencia] asignada, al marcarlo como realizado se genera
+/// automáticamente el siguiente trabajo de la serie.
 class CustomerService extends ChangeNotifier {
   final SupabaseClient _client = Supabase.instance.client;
   static const String _tabla = 'clientes';
@@ -35,6 +39,17 @@ class CustomerService extends ChangeNotifier {
   /// Clientes/trabajos filtrados por estado.
   List<Customer> porEstado(EstadoTrabajo estado) =>
       customers.where((c) => c.estado == estado).toList();
+
+  /// Todos los trabajos (pasados y futuros) que pertenecen a la misma
+  /// serie recurrente que [cliente], del más reciente al más antiguo.
+  /// Si [cliente] nunca fue recurrente, la lista solo lo contiene a él.
+  List<Customer> historialDe(Customer cliente) {
+    final idSerie = cliente.idDeSerie;
+    final lista =
+        _customers.where((c) => c.idDeSerie == idSerie).toList();
+    lista.sort((a, b) => b.fecha.compareTo(a.fecha));
+    return lista;
+  }
 
   Customer? _buscar(String id) {
     for (final cliente in _customers) {
@@ -84,20 +99,20 @@ class CustomerService extends ChangeNotifier {
     required String nombre,
     required String lugar,
     required DateTime fecha,
-    required double precio,
-    String? servicioId,
-    String servicioNombre = '',
+    required List<ServicioAgendado> servicios,
+    Recurrencia? recurrencia,
   }) async {
     try {
+      final precioTotal = _sumarServicios(servicios);
       final fila = await _client
           .from(_tabla)
           .insert({
             'nombre': nombre,
             'lugar': lugar,
             'fecha': _soloFecha(fecha),
-            'precio': precio,
-            'servicio_id': servicioId,
-            'servicio_nombre': servicioNombre,
+            'precio': precioTotal,
+            'servicios': servicios.map((s) => s.toMap()).toList(),
+            'recurrencia': recurrencia?.name,
           })
           .select()
           .single();
@@ -119,18 +134,18 @@ class CustomerService extends ChangeNotifier {
     required String nombre,
     required String lugar,
     required DateTime fecha,
-    required double precio,
-    String? servicioId,
-    String servicioNombre = '',
+    required List<ServicioAgendado> servicios,
+    Recurrencia? recurrencia,
   }) async {
     try {
+      final precioTotal = _sumarServicios(servicios);
       await _client.from(_tabla).update({
         'nombre': nombre,
         'lugar': lugar,
         'fecha': _soloFecha(fecha),
-        'precio': precio,
-        'servicio_id': servicioId,
-        'servicio_nombre': servicioNombre,
+        'precio': precioTotal,
+        'servicios': servicios.map((s) => s.toMap()).toList(),
+        'recurrencia': recurrencia?.name,
       }).eq('id', id);
 
       final cliente = _buscar(id);
@@ -138,9 +153,9 @@ class CustomerService extends ChangeNotifier {
         cliente.nombre = nombre;
         cliente.lugar = lugar;
         cliente.fecha = fecha;
-        cliente.precio = precio;
-        cliente.servicioId = servicioId;
-        cliente.servicioNombre = servicioNombre;
+        cliente.precio = precioTotal;
+        cliente.servicios = servicios;
+        cliente.recurrencia = recurrencia;
         notifyListeners();
         // La fecha pudo haber cambiado: solo tiene sentido reprogramar
         // el recordatorio si el trabajo sigue pendiente.
@@ -155,7 +170,9 @@ class CustomerService extends ChangeNotifier {
     }
   }
 
-  /// Marca el trabajo como ya realizado (pendiente de cobro).
+  /// Marca el trabajo como ya realizado (pendiente de cobro). Si el
+  /// cliente es recurrente, genera automáticamente el siguiente
+  /// trabajo de la serie.
   Future<void> marcarRealizado(String id) async {
     try {
       await _client.from(_tabla).update({'estado': 'realizado'}).eq('id', id);
@@ -170,10 +187,49 @@ class CustomerService extends ChangeNotifier {
         await NotificationService.instance.avisarCobroPendiente(cliente);
         await NotificationService.instance
             .iniciarRecordatorioCobroSemanal(cliente);
+
+        if (cliente.recurrencia != null) {
+          await _generarSiguienteOcurrencia(cliente);
+        }
       }
     } catch (e) {
       debugPrint('Error marcando trabajo como realizado: $e');
       rethrow;
+    }
+  }
+
+  /// Crea el siguiente trabajo de una serie recurrente, heredando
+  /// nombre, lugar, precio, servicio enlazado y la misma frecuencia,
+  /// con la fecha que corresponda según [Recurrencia.siguienteFecha].
+  Future<void> _generarSiguienteOcurrencia(Customer actual) async {
+    try {
+      final siguienteFecha = actual.recurrencia!.siguienteFecha(actual.fecha);
+
+      final fila = await _client
+          .from(_tabla)
+          .insert({
+            'nombre': actual.nombre,
+            'lugar': actual.lugar,
+            'fecha': _soloFecha(siguienteFecha),
+            'precio': actual.precio,
+            'servicios': actual.servicios.map((s) => s.toMap()).toList(),
+            'recurrencia': actual.recurrencia!.name,
+            'grupo_recurrente_id': actual.idDeSerie,
+          })
+          .select()
+          .single();
+
+      final nuevo = Customer.fromMap(fila);
+      _customers.add(nuevo);
+      notifyListeners();
+
+      await NotificationService.instance.programarRecordatoriosTrabajo(nuevo);
+      await NotificationService.instance.avisarTrabajoRecurrenteGenerado(nuevo);
+    } catch (e) {
+      debugPrint('Error generando el siguiente trabajo recurrente: $e');
+      // No relanzamos: que falle la generación automática del
+      // siguiente trabajo no debería impedir que el actual quede
+      // marcado como realizado.
     }
   }
 
@@ -256,4 +312,10 @@ class CustomerService extends ChangeNotifier {
   /// La columna `fecha` en Supabase es de tipo `date` (sin hora), así
   /// que enviamos solo "YYYY-MM-DD".
   String _soloFecha(DateTime fecha) => fecha.toIso8601String().split('T').first;
+
+  /// Precio total de un trabajo: la suma de todos sus servicios
+  /// agendados. Nunca se recibe como parámetro aparte para evitar que
+  /// quede desincronizado de la lista real de servicios.
+  double _sumarServicios(List<ServicioAgendado> servicios) =>
+      servicios.fold<double>(0, (suma, s) => suma + s.precio);
 }

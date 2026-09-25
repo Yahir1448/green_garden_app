@@ -5,18 +5,21 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'screens/auth_screen.dart';
 import 'screens/business_profile_screen.dart';
+import 'screens/cotizador_screen.dart';
 import 'screens/customer_screen.dart';
 import 'screens/finance_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/services_screen.dart';
 import 'services/brand_cache.dart';
 import 'services/business_profile_service.dart';
+import 'services/cotizacion_service.dart';
 import 'services/customer_service.dart';
 import 'services/finance_service.dart';
 import 'services/inventory_service.dart';
 import 'services/invoice_service.dart';
 import 'services/notification_service.dart';
 import 'services/service_catalog_service.dart';
+import 'services/tarifa_service.dart';
 import 'supabase/supabase_config.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
@@ -75,6 +78,8 @@ class _MyAppState extends State<MyApp> {
   final ServiceCatalogService _serviceCatalogService = ServiceCatalogService();
   final BusinessProfileService _businessProfileService = BusinessProfileService();
   final InvoiceService _invoiceService = InvoiceService();
+  final TarifaService _tarifaService = TarifaService();
+  final CotizacionService _cotizacionService = CotizacionService();
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +106,8 @@ class _MyAppState extends State<MyApp> {
                 serviceCatalogService: _serviceCatalogService,
                 businessProfileService: _businessProfileService,
                 invoiceService: _invoiceService,
+                tarifaService: _tarifaService,
+                cotizacionService: _cotizacionService,
               ),
             );
           },
@@ -127,6 +134,8 @@ class AuthGate extends StatefulWidget {
   final ServiceCatalogService serviceCatalogService;
   final BusinessProfileService businessProfileService;
   final InvoiceService invoiceService;
+  final TarifaService tarifaService;
+  final CotizacionService cotizacionService;
 
   const AuthGate({
     super.key,
@@ -136,6 +145,8 @@ class AuthGate extends StatefulWidget {
     required this.serviceCatalogService,
     required this.businessProfileService,
     required this.invoiceService,
+    required this.tarifaService,
+    required this.cotizacionService,
   });
 
   @override
@@ -182,6 +193,8 @@ class _AuthGateState extends State<AuthGate> {
       widget.financeService.cargar(),
       widget.serviceCatalogService.cargar(),
       widget.businessProfileService.cargar(),
+      widget.tarifaService.cargar(),
+      widget.cotizacionService.cargar(),
     ]);
     if (mounted) setState(() => _cargandoInicial = false);
   }
@@ -192,6 +205,8 @@ class _AuthGateState extends State<AuthGate> {
     widget.financeService.limpiar();
     widget.serviceCatalogService.limpiar();
     widget.businessProfileService.limpiar();
+    widget.tarifaService.limpiar();
+    widget.cotizacionService.limpiar();
     // Evita que la próxima cuenta que inicie sesión en este teléfono
     // reciba avisos programados con datos de la cuenta anterior.
     NotificationService.instance.limpiarTodo();
@@ -216,6 +231,8 @@ class _AuthGateState extends State<AuthGate> {
       serviceCatalogService: widget.serviceCatalogService,
       businessProfileService: widget.businessProfileService,
       invoiceService: widget.invoiceService,
+      tarifaService: widget.tarifaService,
+      cotizacionService: widget.cotizacionService,
     );
   }
 }
@@ -230,6 +247,8 @@ class HomePage extends StatelessWidget {
   final ServiceCatalogService serviceCatalogService;
   final BusinessProfileService businessProfileService;
   final InvoiceService invoiceService;
+  final TarifaService tarifaService;
+  final CotizacionService cotizacionService;
 
   const HomePage({
     super.key,
@@ -239,6 +258,8 @@ class HomePage extends StatelessWidget {
     required this.serviceCatalogService,
     required this.businessProfileService,
     required this.invoiceService,
+    required this.tarifaService,
+    required this.cotizacionService,
   });
 
   Future<void> _cerrarSesion(BuildContext context) async {
@@ -340,6 +361,26 @@ class HomePage extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (_) => ServicesScreen(service: serviceCatalogService),
+                  ),
+                );
+              },
+            ),
+            _ModuleCard(
+              icon: Icons.calculate,
+              label: 'Cotizador',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => CotizadorScreen(
+                      tarifaService: tarifaService,
+                      cotizacionService: cotizacionService,
+                      serviceCatalogService: serviceCatalogService,
+                      customerService: customerService,
+                      financeService: financeService,
+                      businessProfileService: businessProfileService,
+                      invoiceService: invoiceService,
+                    ),
                   ),
                 );
               },

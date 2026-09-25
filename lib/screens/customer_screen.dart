@@ -15,6 +15,23 @@ import '../theme/app_theme.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'business_profile_screen.dart';
 
+/// Datos con los que se puede prellenar el formulario de "Nuevo
+/// cliente" cuando viene de una cotización aceptada en el Cotizador:
+/// el nombre/lugar tentativos y los servicios ya cotizados (con sus
+/// precios repartidos). El usuario solo tiene que confirmar la fecha y
+/// guardar.
+class ClientePrellenado {
+  final String nombre;
+  final String lugar;
+  final List<ServicioAgendado> servicios;
+
+  const ClientePrellenado({
+    this.nombre = '',
+    this.lugar = '',
+    this.servicios = const [],
+  });
+}
+
 /// Pantalla que muestra y administra la lista de clientes/trabajos:
 /// nombre, lugar, fecha, precio, servicio enlazado y el estado del
 /// trabajo (pendiente, por cobrar o pagado). Cobrar un trabajo crea
@@ -26,6 +43,11 @@ class CustomerScreen extends StatefulWidget {
   final BusinessProfileService businessProfileService;
   final InvoiceService invoiceService;
 
+  /// Si viene de una cotización aceptada en el Cotizador, abre el
+  /// formulario de "Nuevo cliente" automáticamente con estos datos ya
+  /// cargados.
+  final ClientePrellenado? prellenado;
+
   const CustomerScreen({
     super.key,
     required this.service,
@@ -33,6 +55,7 @@ class CustomerScreen extends StatefulWidget {
     required this.financeService,
     required this.businessProfileService,
     required this.invoiceService,
+    this.prellenado,
   });
 
   @override
@@ -47,6 +70,13 @@ class _CustomerScreenState extends State<CustomerScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    if (widget.prellenado != null) {
+      // Se espera al primer frame para poder abrir el bottom sheet con
+      // un context ya montado.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _abrirFormulario(prellenado: widget.prellenado);
+      });
+    }
   }
 
   @override
@@ -55,7 +85,7 @@ class _CustomerScreenState extends State<CustomerScreen>
     super.dispose();
   }
 
-  Future<void> _abrirFormulario({Customer? cliente}) async {
+  Future<void> _abrirFormulario({Customer? cliente, ClientePrellenado? prellenado}) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -71,6 +101,7 @@ class _CustomerScreenState extends State<CustomerScreen>
           service: widget.service,
           serviceCatalog: widget.serviceCatalog,
           cliente: cliente,
+          prellenado: prellenado,
         ),
       ),
     );
@@ -635,11 +666,13 @@ class _CustomerFormSheet extends StatefulWidget {
   final CustomerService service;
   final ServiceCatalogService serviceCatalog;
   final Customer? cliente;
+  final ClientePrellenado? prellenado;
 
   const _CustomerFormSheet({
     required this.service,
     required this.serviceCatalog,
     this.cliente,
+    this.prellenado,
   });
 
   @override
@@ -692,18 +725,20 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
   void initState() {
     super.initState();
     final cliente = widget.cliente;
-    _nombreCtrl = TextEditingController(text: cliente?.nombre ?? '');
-    _lugarCtrl = TextEditingController(text: cliente?.lugar ?? '');
+    final prellenado = widget.prellenado;
+    _nombreCtrl = TextEditingController(text: cliente?.nombre ?? prellenado?.nombre ?? '');
+    _lugarCtrl = TextEditingController(text: cliente?.lugar ?? prellenado?.lugar ?? '');
     _fecha = cliente?.fecha ?? DateTime.now();
     _esRecurrente = cliente?.recurrencia != null;
     _recurrencia = cliente?.recurrencia ?? Recurrencia.mensual;
 
-    if (cliente != null && cliente.servicios.isNotEmpty) {
-      for (final s in cliente.servicios) {
+    final serviciosIniciales = cliente?.servicios ?? prellenado?.servicios ?? const [];
+    if (serviciosIniciales.isNotEmpty) {
+      for (final s in serviciosIniciales) {
         _agregarFila(
           servicioId: s.servicioId,
           nombreInicial: s.nombre,
-          precioInicial: s.precio.toString(),
+          precioInicial: s.precio.toStringAsFixed(2),
         );
       }
     } else {

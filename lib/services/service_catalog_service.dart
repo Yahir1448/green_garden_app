@@ -57,6 +57,7 @@ class ServiceCatalogService extends ChangeNotifier {
     required String nombre,
     required String descripcion,
     required double precio,
+    List<RecetaInsumo> receta = const [],
   }) async {
     try {
       final fila = await _client
@@ -65,6 +66,7 @@ class ServiceCatalogService extends ChangeNotifier {
             'nombre': nombre,
             'descripcion': descripcion,
             'precio': precio,
+            'receta': receta.map((r) => r.toMap()).toList(),
           })
           .select()
           .single();
@@ -76,18 +78,26 @@ class ServiceCatalogService extends ChangeNotifier {
     }
   }
 
+  /// [receta] es opcional: si se omite (null), la receta actual del
+  /// servicio no se toca. Se pasa explícitamente solo desde
+  /// RecetasScreen, que es donde se configura.
   Future<void> actualizarServicio(
     String id, {
     required String nombre,
     required String descripcion,
     required double precio,
+    List<RecetaInsumo>? receta,
   }) async {
     try {
-      await _client.from(_tabla).update({
+      final actualizacion = <String, dynamic>{
         'nombre': nombre,
         'descripcion': descripcion,
         'precio': precio,
-      }).eq('id', id);
+      };
+      if (receta != null) {
+        actualizacion['receta'] = receta.map((r) => r.toMap()).toList();
+      }
+      await _client.from(_tabla).update(actualizacion).eq('id', id);
 
       final index = _servicios.indexWhere((s) => s.id == id);
       if (index != -1) {
@@ -95,6 +105,7 @@ class ServiceCatalogService extends ChangeNotifier {
           nombre: nombre,
           descripcion: descripcion,
           precio: precio,
+          receta: receta,
         );
         notifyListeners();
       }

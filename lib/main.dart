@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'screens/agenda_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/business_profile_screen.dart';
 import 'screens/cotizador_screen.dart';
 import 'screens/customer_screen.dart';
 import 'screens/finance_screen.dart';
 import 'screens/inventory_screen.dart';
+import 'screens/recetas_screen.dart';
 import 'screens/services_screen.dart';
 import 'services/brand_cache.dart';
 import 'services/business_profile_service.dart';
@@ -336,6 +338,23 @@ class HomePage extends StatelessWidget {
                       financeService: financeService,
                       businessProfileService: businessProfileService,
                       invoiceService: invoiceService,
+                      inventoryService: inventoryService,
+                    ),
+                  ),
+                );
+              },
+            ),
+            _ModuleCard(
+              icon: Icons.calendar_month,
+              label: 'Agenda',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AgendaScreen(
+                      customerService: customerService,
+                      serviceCatalogService: serviceCatalogService,
+                      inventoryService: inventoryService,
                     ),
                   ),
                 );
@@ -380,6 +399,22 @@ class HomePage extends StatelessWidget {
                       financeService: financeService,
                       businessProfileService: businessProfileService,
                       invoiceService: invoiceService,
+                      inventoryService: inventoryService,
+                    ),
+                  ),
+                );
+              },
+            ),
+            _ModuleCard(
+              icon: Icons.grass,
+              label: 'Recetas',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => RecetasScreen(
+                      serviceCatalog: serviceCatalogService,
+                      inventoryService: inventoryService,
                     ),
                   ),
                 );

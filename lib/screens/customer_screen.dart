@@ -8,10 +8,12 @@ import '../pdf/invoice_pdf.dart';
 import '../services/business_profile_service.dart';
 import '../services/customer_service.dart';
 import '../services/finance_service.dart';
+import '../services/inventory_service.dart';
 import '../services/invoice_service.dart';
 import '../services/notification_service.dart';
 import '../services/service_catalog_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/inventario_descuento.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'business_profile_screen.dart';
 
@@ -42,6 +44,7 @@ class CustomerScreen extends StatefulWidget {
   final FinanceService financeService;
   final BusinessProfileService businessProfileService;
   final InvoiceService invoiceService;
+  final InventoryService inventoryService;
 
   /// Si viene de una cotización aceptada en el Cotizador, abre el
   /// formulario de "Nuevo cliente" automáticamente con estos datos ya
@@ -55,6 +58,7 @@ class CustomerScreen extends StatefulWidget {
     required this.financeService,
     required this.businessProfileService,
     required this.invoiceService,
+    required this.inventoryService,
     this.prellenado,
   });
 
@@ -207,6 +211,35 @@ class _CustomerScreenState extends State<CustomerScreen>
     }
   }
 
+  /// Marca el trabajo como realizado y, de paso, descuenta del
+  /// inventario los insumos que consuman los servicios agendados según
+  /// su receta configurada (ver "Insumos por servicio").
+  Future<void> _marcarRealizado(String id) async {
+    try {
+      await widget.service.marcarRealizado(id);
+      Customer? cliente;
+      for (final c in widget.service.customers) {
+        if (c.id == id) {
+          cliente = c;
+          break;
+        }
+      }
+      if (cliente != null) {
+        await descontarInsumosDelTrabajo(
+          servicios: cliente.servicios,
+          serviceCatalog: widget.serviceCatalog,
+          inventoryService: widget.inventoryService,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo actualizar. Intenta de nuevo.')),
+        );
+      }
+    }
+  }
+
   Future<void> _deshacerCobro(Customer cliente) async {
     try {
       if (cliente.financeEntryId != null) {
@@ -277,7 +310,35 @@ class _CustomerScreenState extends State<CustomerScreen>
         perfil: perfil,
         numeroFactura: numero,
       );
-      await Printing.layoutPdf(onLayout: (_) async => bytes);
+
+      if (!mounted) return;
+      final accion = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Factura generada'),
+          content: const Text('¿Qué deseas hacer con la factura?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'ver'),
+              child: const Text('Ver / Imprimir'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, 'compartir'),
+              icon: const Icon(Icons.share),
+              label: const Text('Compartir'),
+            ),
+          ],
+        ),
+      );
+
+      if (accion == 'compartir') {
+        // Abre el selector nativo de apps (WhatsApp, correo, etc.) con
+        // el PDF de la factura listo para enviar.
+        await Printing.sharePdf(bytes: bytes, filename: 'factura_$numero.pdf');
+      } else if (accion == 'ver') {
+        await Printing.layoutPdf(onLayout: (_) async => bytes);
+      }
+
       await NotificationService.instance.avisarFacturaGenerada(
         numero: numero,
         clienteNombre: cliente.nombre,
@@ -348,7 +409,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 formatearFecha: _formatearFecha,
                 onTap: (c) => _abrirFormulario(cliente: c),
                 onDelete: _confirmarEliminar,
-                onMarcarRealizado: widget.service.marcarRealizado,
+                onMarcarRealizado: _marcarRealizado,
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
                 onGenerarFactura: _generarFactura,
@@ -359,7 +420,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 formatearFecha: _formatearFecha,
                 onTap: (c) => _abrirFormulario(cliente: c),
                 onDelete: _confirmarEliminar,
-                onMarcarRealizado: widget.service.marcarRealizado,
+                onMarcarRealizado: _marcarRealizado,
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
                 onGenerarFactura: _generarFactura,
@@ -370,7 +431,7 @@ class _CustomerScreenState extends State<CustomerScreen>
                 formatearFecha: _formatearFecha,
                 onTap: (c) => _abrirFormulario(cliente: c),
                 onDelete: _confirmarEliminar,
-                onMarcarRealizado: widget.service.marcarRealizado,
+                onMarcarRealizado: _marcarRealizado,
                 onCobrar: _cobrar,
                 onDeshacerCobro: _deshacerCobro,
                 onGenerarFactura: _generarFactura,

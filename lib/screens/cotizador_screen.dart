@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:printing/printing.dart';
 
 import '../models/cotizacion.dart';
 import '../models/customer.dart';
 import '../models/tarifa_servicio.dart';
+import '../pdf/quote_pdf.dart';
 import '../services/business_profile_service.dart';
 import '../services/cotizacion_service.dart';
 import '../services/customer_service.dart';
 import '../services/finance_service.dart';
+import '../services/inventory_service.dart';
 import '../services/invoice_service.dart';
 import '../services/service_catalog_service.dart';
 import '../services/tarifa_service.dart';
@@ -30,6 +33,7 @@ class CotizadorScreen extends StatefulWidget {
   final FinanceService financeService;
   final BusinessProfileService businessProfileService;
   final InvoiceService invoiceService;
+  final InventoryService inventoryService;
 
   const CotizadorScreen({
     super.key,
@@ -40,6 +44,7 @@ class CotizadorScreen extends StatefulWidget {
     required this.financeService,
     required this.businessProfileService,
     required this.invoiceService,
+    required this.inventoryService,
   });
 
   @override
@@ -157,6 +162,7 @@ class _CotizadorScreenState extends State<CotizadorScreen>
             financeService: widget.financeService,
             businessProfileService: widget.businessProfileService,
             invoiceService: widget.invoiceService,
+            inventoryService: widget.inventoryService,
           ),
           ListenableBuilder(
             listenable: widget.cotizacionService,
@@ -288,6 +294,7 @@ class _CalculadoraForm extends StatefulWidget {
   final FinanceService financeService;
   final BusinessProfileService businessProfileService;
   final InvoiceService invoiceService;
+  final InventoryService inventoryService;
 
   const _CalculadoraForm({
     super.key,
@@ -298,6 +305,7 @@ class _CalculadoraForm extends StatefulWidget {
     required this.financeService,
     required this.businessProfileService,
     required this.invoiceService,
+    required this.inventoryService,
   });
 
   @override
@@ -519,6 +527,39 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
         .toList();
   }
 
+  bool _compartiendo = false;
+
+  Future<void> _compartirCotizacion() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _compartiendo = true);
+    try {
+      final lineas = _construirLineas();
+      final bytes = await QuotePdf.generar(
+        nombreCliente: _nombreClienteCtrl.text.trim(),
+        lugar: _lugarCtrl.text.trim(),
+        servicios: lineas,
+        margenRentabilidad: _margen,
+        costoTotal: _costoTotal,
+        precioTotal: _precioFinal,
+        perfil: widget.businessProfileService.perfil,
+      );
+      // Abre el selector nativo de apps (WhatsApp, correo, etc.) con el
+      // PDF de la cotización listo para enviar.
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: 'cotizacion_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo generar la cotización. Intenta de nuevo.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _compartiendo = false);
+    }
+  }
+
   Future<void> _agendar() async {
     if (!_formKey.currentState!.validate()) return;
     if (_filas.isEmpty) return;
@@ -562,6 +603,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
             financeService: widget.financeService,
             businessProfileService: widget.businessProfileService,
             invoiceService: widget.invoiceService,
+            inventoryService: widget.inventoryService,
             prellenado: ClientePrellenado(
               nombre: _nombreClienteCtrl.text.trim(),
               lugar: _lugarCtrl.text.trim(),
@@ -823,6 +865,18 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                     ? 'Actualizar cotización guardada'
                     : 'Guardar cotización',
               ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _compartiendo ? null : _compartirCotizacion,
+              icon: _compartiendo
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.share),
+              label: const Text('Compartir cotización'),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(

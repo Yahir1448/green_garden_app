@@ -6,6 +6,7 @@ import '../services/inventory_service.dart';
 import '../services/service_catalog_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/inventario_descuento.dart';
+import '../widgets/offline_banner.dart';
 
 /// Vista de calendario/agenda: un mes a la vez, con un punto en los
 /// días que tienen al menos un trabajo agendado. Al tocar un día se ve
@@ -128,6 +129,7 @@ class _AgendaScreenState extends State<AgendaScreen> {
         builder: (context, _) {
           return Column(
             children: [
+              const OfflineBanner(),
               // Encabezado con el mes y flechas de navegación.
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),

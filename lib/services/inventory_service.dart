@@ -56,8 +56,9 @@ class InventoryService extends ChangeNotifier {
   }
 
   /// Agrega un nuevo artículo. El id y el dueño (user_id) los asigna
-  /// Supabase automáticamente.
-  Future<void> agregarItem({
+  /// Supabase automáticamente. Devuelve el artículo creado (con su id)
+  /// para poder enlazarlo, por ejemplo, a la receta de un servicio.
+  Future<InventoryItem> agregarItem({
     required String nombre,
     required ItemCategoria categoria,
     required double cantidad,
@@ -83,6 +84,7 @@ class InventoryService extends ChangeNotifier {
       _items.add(creado);
       notifyListeners();
       await NotificationService.instance.revisarStockBajo(creado);
+      return creado;
     } catch (e) {
       debugPrint('Error agregando artículo: $e');
       rethrow;

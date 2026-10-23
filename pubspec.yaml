@@ -59,6 +59,14 @@ dependencies:
   image_picker: ^1.2.1
   shared_preferences: ^2.5.2
 
+  # Detecta el estado de la conexión a internet (wifi/datos móviles)
+  # para el modo sin conexión: ver ConnectivityService y
+  # SyncQueueService.
+  connectivity_plus: ^7.3.1
+
+  # Acceso con huella o rostro como candado al abrir la app.
+  local_auth: ^3.0.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -69,6 +77,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # Genera el ícono de la app (launcher) en Android e iOS a partir de
+  # assets/icon/. Se ejecuta una sola vez con:
+  #   dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -111,3 +124,13 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# Configuración de flutter_launcher_icons (ícono de la app).
+# - app_icon.png: ícono completo (iOS y Android antiguo).
+# - app_icon_foreground.png + fondo: ícono adaptativo de Android.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#021802"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"

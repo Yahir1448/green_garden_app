@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -41,6 +42,16 @@ class NotificationService {
 
   bool _listo = false;
 
+  /// Ícono pequeño de las notificaciones en Android: silueta blanca
+  /// sobre fondo transparente, guardada como recurso en
+  /// android/app/src/main/res/drawable-*/ic_stat_logo.png. Se indica
+  /// sin "@drawable/" ni extensión.
+  static const String _iconoNotificacion = 'ic_stat_logo';
+
+  /// Verde de la marca: Android lo usa para teñir el círculo del
+  /// ícono pequeño y el nombre de la app en la notificación.
+  static const Color _colorMarca = Color(0xFF5FBE32);
+
   static const AndroidNotificationChannel _canalGeneral =
       AndroidNotificationChannel(
     'green_garden_general',
@@ -74,6 +85,8 @@ class NotificationService {
           'Recordatorios de trabajos agendados y de cobros pendientes',
       importance: Importance.high,
       priority: Priority.high,
+      icon: _iconoNotificacion,
+      color: _colorMarca,
     ),
   );
 
@@ -84,6 +97,8 @@ class NotificationService {
       channelDescription: 'Facturas generadas y cobros registrados',
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
+      icon: _iconoNotificacion,
+      color: _colorMarca,
     ),
   );
 
@@ -94,6 +109,8 @@ class NotificationService {
       channelDescription: 'Avisos de stock bajo',
       importance: Importance.high,
       priority: Priority.high,
+      icon: _iconoNotificacion,
+      color: _colorMarca,
     ),
   );
 
@@ -131,8 +148,10 @@ class NotificationService {
       debugPrint('No se pudo fijar la zona horaria local: $e');
     }
 
+    // Ícono por defecto de las notificaciones de Android (antes era
+    // '@mipmap/ic_launcher', que Android pinta como un cuadro blanco).
     const inicializacionAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+        AndroidInitializationSettings(_iconoNotificacion);
 
     const inicializacionIOS = DarwinInitializationSettings();
 

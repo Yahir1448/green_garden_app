@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../services/biometric_service.dart';
 import '../services/business_profile_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/business_logo.dart';
@@ -266,6 +267,15 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
               const Divider(),
               const SizedBox(height: 16),
               Text(
+                'Seguridad',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              const _BiometricSwitchTile(),
+              const SizedBox(height: 8),
+              const Divider(),
+              const SizedBox(height: 16),
+              Text(
                 'Estos datos aparecen en el encabezado de cada factura que generes.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
@@ -310,6 +320,80 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Interruptor "Acceso con huella o rostro". Para activarlo se pide
+/// primero la huella/rostro, así se confirma que el teléfono realmente
+/// lo tiene configurado y que quien lo activa es el dueño. Cambia al
+/// momento: no depende del botón "Guardar" del formulario.
+class _BiometricSwitchTile extends StatefulWidget {
+  const _BiometricSwitchTile();
+
+  @override
+  State<_BiometricSwitchTile> createState() => _BiometricSwitchTileState();
+}
+
+class _BiometricSwitchTileState extends State<_BiometricSwitchTile> {
+  final BiometricService _bio = BiometricService.instance;
+
+  bool? _disponible; // null = todavía comprobando
+  late bool _activada = _bio.activada;
+  bool _trabajando = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _comprobar();
+  }
+
+  Future<void> _comprobar() async {
+    final disponible = await _bio.disponible();
+    if (mounted) setState(() => _disponible = disponible);
+  }
+
+  Future<void> _cambiar(bool activar) async {
+    setState(() => _trabajando = true);
+
+    if (activar) {
+      final ok = await _bio.autenticar(
+        'Confirma tu identidad para activar el acceso biométrico',
+      );
+      if (ok) {
+        await _bio.activar();
+      } else if (mounted && _bio.ultimoError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_bio.ultimoError!)),
+        );
+      }
+    } else {
+      await _bio.desactivar();
+    }
+
+    if (mounted) {
+      setState(() {
+        _activada = _bio.activada;
+        _trabajando = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final noDisponible = _disponible == false;
+
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      secondary: const Icon(Icons.fingerprint),
+      title: const Text('Acceso con huella o rostro'),
+      subtitle: Text(
+        noDisponible
+            ? 'Este teléfono no tiene huella o rostro configurado.'
+            : 'Pide tu huella o rostro al abrir la app.',
+      ),
+      value: _activada,
+      onChanged: (_disponible != true || _trabajando) ? null : _cambiar,
     );
   }
 }

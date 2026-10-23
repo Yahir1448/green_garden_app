@@ -6,14 +6,17 @@ import '../models/finance_entry.dart';
 import '../models/service_item.dart';
 import '../pdf/invoice_pdf.dart';
 import '../services/business_profile_service.dart';
+import '../services/connectivity_service.dart';
 import '../services/customer_service.dart';
 import '../services/finance_service.dart';
 import '../services/inventory_service.dart';
 import '../services/invoice_service.dart';
 import '../services/notification_service.dart';
 import '../services/service_catalog_service.dart';
+import '../services/sync_queue_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/inventario_descuento.dart';
+import '../widgets/offline_banner.dart';
 import '../widgets/theme_toggle_button.dart';
 import 'business_profile_screen.dart';
 
@@ -177,6 +180,34 @@ class _CustomerScreenState extends State<CustomerScreen>
     );
 
     if (metodo == null) return;
+
+    if (!ConnectivityService.instance.isOnline) {
+      // Sin conexión no podemos crear el ingreso real en Finanzas (eso
+      // también necesita red), así que actualizamos la UI de una vez
+      // como si ya estuviera cobrado, y dejamos el cobro real (crear el
+      // movimiento en Finanzas + enlazarlo aquí) encolado para cuando
+      // vuelva la señal. Ver el manejador 'cobro_pendiente' en
+      // main.dart, que es quien coordina ambos módulos.
+      widget.service.marcarPagadoOptimista(cliente.id, metodo);
+      await SyncQueueService.instance.encolar('cobro_pendiente', {
+        'clienteId': cliente.id,
+        'descripcion': cliente.servicioNombre.isNotEmpty
+            ? 'Cobro a ${cliente.nombre} - ${cliente.servicioNombre}'
+            : 'Cobro a ${cliente.nombre}',
+        'monto': cliente.precio,
+        'fecha': DateTime.now().toIso8601String(),
+        'categoria': metodo.label,
+        'metodoPago': metodo.name,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cobro guardado sin conexión. Se sincronizará solo cuando vuelva la señal.'),
+          ),
+        );
+      }
+      return;
+    }
 
     try {
       // Se crea el ingreso en Finanzas y se enlaza su id al cliente,
@@ -378,6 +409,20 @@ class _CustomerScreenState extends State<CustomerScreen>
     );
   }
 
+  Widget _listaPara(EstadoTrabajo estado) {
+    return _ListaClientes(
+      clientes: widget.service.porEstado(estado),
+      formatearFecha: _formatearFecha,
+      onTap: (c) => _abrirFormulario(cliente: c),
+      onDelete: _confirmarEliminar,
+      onMarcarRealizado: _marcarRealizado,
+      onCobrar: _cobrar,
+      onDeshacerCobro: _deshacerCobro,
+      onGenerarFactura: _generarFactura,
+      onVerHistorial: _verHistorial,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -398,48 +443,25 @@ class _CustomerScreenState extends State<CustomerScreen>
           ],
         ),
       ),
-      body: ListenableBuilder(
-        listenable: widget.service,
-        builder: (context, _) {
-          return TabBarView(
-            controller: _tabController,
-            children: [
-              _ListaClientes(
-                clientes: widget.service.porEstado(EstadoTrabajo.pendiente),
-                formatearFecha: _formatearFecha,
-                onTap: (c) => _abrirFormulario(cliente: c),
-                onDelete: _confirmarEliminar,
-                onMarcarRealizado: _marcarRealizado,
-                onCobrar: _cobrar,
-                onDeshacerCobro: _deshacerCobro,
-                onGenerarFactura: _generarFactura,
-                onVerHistorial: _verHistorial,
-              ),
-              _ListaClientes(
-                clientes: widget.service.porEstado(EstadoTrabajo.realizado),
-                formatearFecha: _formatearFecha,
-                onTap: (c) => _abrirFormulario(cliente: c),
-                onDelete: _confirmarEliminar,
-                onMarcarRealizado: _marcarRealizado,
-                onCobrar: _cobrar,
-                onDeshacerCobro: _deshacerCobro,
-                onGenerarFactura: _generarFactura,
-                onVerHistorial: _verHistorial,
-              ),
-              _ListaClientes(
-                clientes: widget.service.porEstado(EstadoTrabajo.pagado),
-                formatearFecha: _formatearFecha,
-                onTap: (c) => _abrirFormulario(cliente: c),
-                onDelete: _confirmarEliminar,
-                onMarcarRealizado: _marcarRealizado,
-                onCobrar: _cobrar,
-                onDeshacerCobro: _deshacerCobro,
-                onGenerarFactura: _generarFactura,
-                onVerHistorial: _verHistorial,
-              ),
-            ],
-          );
-        },
+      body: Column(
+        children: [
+          const OfflineBanner(),
+          Expanded(
+            child: ListenableBuilder(
+              listenable: widget.service,
+              builder: (context, _) {
+                return TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _listaPara(EstadoTrabajo.pendiente),
+                    _listaPara(EstadoTrabajo.realizado),
+                    _listaPara(EstadoTrabajo.pagado),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _abrirFormulario(),
@@ -447,6 +469,23 @@ class _CustomerScreenState extends State<CustomerScreen>
         label: const Text('Nuevo cliente'),
       ),
     );
+  }
+}
+
+/// Color del estado pensado para TEXTO e íconos sobre el fondo
+/// translúcido del chip/avatar. Los colores "planos" (naranja,
+/// blueGrey, verde oscuro) se leían lavados sobre fondo claro y casi
+/// invisibles sobre fondo oscuro: aquí se usa un tono más oscuro en
+/// tema claro y uno más claro en tema oscuro.
+Color _colorTextoEstado(BuildContext context, EstadoTrabajo estado) {
+  final oscuro = Theme.of(context).brightness == Brightness.dark;
+  switch (estado) {
+    case EstadoTrabajo.pendiente:
+      return oscuro ? Colors.orange.shade300 : Colors.orange.shade900;
+    case EstadoTrabajo.realizado:
+      return oscuro ? Colors.blueGrey.shade200 : Colors.blueGrey.shade800;
+    case EstadoTrabajo.pagado:
+      return oscuro ? AppColors.limeGreen : AppColors.darkGreen;
   }
 }
 
@@ -488,10 +527,13 @@ class _ListaClientes extends StatelessWidget {
   Widget build(BuildContext context) {
     if (clientes.isEmpty) {
       return Center(
-        child: Text(
-          'No hay clientes en esta categoría todavía.',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodyMedium,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'No hay clientes en esta categoría todavía.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
         ),
       );
     }
@@ -499,122 +541,240 @@ class _ListaClientes extends StatelessWidget {
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
       itemCount: clientes.length,
-      itemBuilder: (context, index) {
-        final cliente = clientes[index];
-        final colorEstado = _colorEstado(cliente.estado);
+      itemBuilder: (context, index) => _tarjeta(context, clientes[index]),
+    );
+  }
 
-        final subtitulo = StringBuffer();
-        if (cliente.servicioNombre.isNotEmpty) {
-          subtitulo.write('${cliente.servicioNombre} • ');
-        }
-        subtitulo.write(cliente.lugar);
-        subtitulo.write('\n${formatearFecha(cliente.fecha)}');
-        if (cliente.estado == EstadoTrabajo.pagado && cliente.metodoPago != null) {
-          subtitulo.write(
-            ' • Pagado con ${cliente.metodoPago!.label}'
-            '${cliente.fechaPago != null ? " el ${formatearFecha(cliente.fechaPago!)}" : ""}',
-          );
-        }
+  /// Tarjeta de un cliente. Antes usaba un ListTile con un `trailing`
+  /// (precio + 3 botones) de ancho libre y un subtítulo de altura
+  /// fija de 3 líneas, lo que desbordaba en pantallas angostas o con
+  /// textos largos. Ahora la info va en una columna que se adapta, el
+  /// precio queda a la derecha y las acciones fluyen (Wrap) a otra
+  /// línea cuando no caben.
+  Widget _tarjeta(BuildContext context, Customer cliente) {
+    final tema = Theme.of(context);
+    final colorEstado = _colorEstado(cliente.estado);
+    final colorTextoEstado = _colorTextoEstado(context, cliente.estado);
+    final estiloDetalle = tema.textTheme.bodyMedium?.copyWith(
+      color: tema.colorScheme.onSurface.withValues(alpha: 0.75),
+    );
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 10),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                ListTile(
-                  onTap: () => onTap(cliente),
-                  leading: CircleAvatar(
+    String? detallePago;
+    if (cliente.estado == EstadoTrabajo.pagado && cliente.metodoPago != null) {
+      detallePago = 'Pagado con ${cliente.metodoPago!.label}';
+      if (cliente.fechaPago != null) {
+        detallePago += ' el ${formatearFecha(cliente.fechaPago!)}';
+      }
+    }
+
+    Widget accionPrincipal;
+    switch (cliente.estado) {
+      case EstadoTrabajo.pendiente:
+        accionPrincipal = TextButton.icon(
+          onPressed: () => onMarcarRealizado(cliente.id),
+          icon: const Icon(Icons.check_circle_outline, size: 18),
+          label: const Text('Marcar realizado'),
+        );
+        break;
+      case EstadoTrabajo.realizado:
+        accionPrincipal = FilledButton.icon(
+          onPressed: () => onCobrar(cliente),
+          icon: const Icon(Icons.attach_money, size: 18),
+          label: const Text('Cobrar'),
+        );
+        break;
+      case EstadoTrabajo.pagado:
+        accionPrincipal = TextButton.icon(
+          onPressed: () => onDeshacerCobro(cliente),
+          icon: const Icon(Icons.undo, size: 18),
+          label: const Text('Deshacer cobro'),
+        );
+        break;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => onTap(cliente),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
                     backgroundColor: colorEstado.withValues(alpha: 0.2),
-                    child: Icon(Icons.person, color: colorEstado),
+                    child: Icon(Icons.person, color: colorTextoEstado),
                   ),
-                  title: Text(cliente.nombre),
-                  subtitle: Text(subtitulo.toString()),
-                  isThreeLine: true,
-                  trailing: Row(
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          cliente.nombre,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: tema.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (cliente.servicioNombre.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            cliente.servicioNombre,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: estiloDetalle?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                        if (cliente.lugar.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          _LineaDetalle(
+                            icono: Icons.place_outlined,
+                            texto: cliente.lugar,
+                            estilo: estiloDetalle,
+                            maxLineas: 2,
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        _LineaDetalle(
+                          icono: Icons.event_outlined,
+                          texto: formatearFecha(cliente.fecha),
+                          estilo: estiloDetalle,
+                        ),
+                        if (detallePago != null) ...[
+                          const SizedBox(height: 4),
+                          _LineaDetalle(
+                            icono: Icons.check_circle_outline,
+                            texto: detallePago,
+                            estilo: estiloDetalle,
+                            maxLineas: 2,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '\$${cliente.precio.toStringAsFixed(2)}',
+                    style: tema.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Wrap: si el estado + la recurrencia no caben en una
+              // línea, la segunda etiqueta baja en vez de desbordar.
+              Wrap(
+                spacing: 6,
+                children: [
+                  Chip(
+                    label: Text(cliente.estado.label),
+                    backgroundColor: colorEstado.withValues(alpha: 0.15),
+                    side: BorderSide.none,
+                    labelStyle: TextStyle(
+                      color: colorTextoEstado,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  if (cliente.recurrencia != null)
+                    Chip(
+                      avatar: const Icon(Icons.repeat, size: 14),
+                      label: Text(cliente.recurrencia!.label),
+                      labelStyle: const TextStyle(fontSize: 12),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              // Wrap: los botones de ícono quedan a la izquierda y la
+              // acción principal a la derecha; si no caben juntos, la
+              // acción principal pasa a la línea de abajo.
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: 4,
+                children: [
+                  Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        '\$${cliente.precio.toStringAsFixed(2)}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      if (cliente.estado == EstadoTrabajo.pagado) ...[
-                        const SizedBox(width: 4),
+                      if (cliente.estado == EstadoTrabajo.pagado)
                         IconButton(
-                          icon: const Icon(Icons.receipt_long_outlined, size: 20),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          icon: const Icon(Icons.receipt_long_outlined),
+                          visualDensity: VisualDensity.compact,
                           onPressed: () => onGenerarFactura(cliente),
                           tooltip: 'Generar factura',
                         ),
-                      ],
-                      const SizedBox(width: 4),
                       IconButton(
-                        icon: const Icon(Icons.history, size: 20),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.history),
+                        visualDensity: VisualDensity.compact,
                         onPressed: () => onVerHistorial(cliente),
                         tooltip: 'Historial de este cliente',
                       ),
-                      const SizedBox(width: 4),
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.delete_outline),
+                        visualDensity: VisualDensity.compact,
                         onPressed: () => onDelete(cliente),
                         tooltip: 'Eliminar',
                       ),
                     ],
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(left: 8, right: 8),
-                  child: Row(
-                    children: [
-                      Chip(
-                        label: Text(cliente.estado.label),
-                        backgroundColor: colorEstado.withValues(alpha: 0.15),
-                        labelStyle: TextStyle(color: colorEstado, fontSize: 12),
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      if (cliente.recurrencia != null) ...[
-                        const SizedBox(width: 6),
-                        Chip(
-                          avatar: const Icon(Icons.repeat, size: 14),
-                          label: Text(cliente.recurrencia!.label),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ],
-                      const Spacer(),
-                      if (cliente.estado == EstadoTrabajo.pendiente)
-                        TextButton.icon(
-                          onPressed: () => onMarcarRealizado(cliente.id),
-                          icon: const Icon(Icons.check_circle_outline, size: 18),
-                          label: const Text('Marcar realizado'),
-                        ),
-                      if (cliente.estado == EstadoTrabajo.realizado)
-                        FilledButton.icon(
-                          onPressed: () => onCobrar(cliente),
-                          icon: const Icon(Icons.attach_money, size: 18),
-                          label: const Text('Cobrar'),
-                        ),
-                      if (cliente.estado == EstadoTrabajo.pagado)
-                        TextButton.icon(
-                          onPressed: () => onDeshacerCobro(cliente),
-                          icon: const Icon(Icons.undo, size: 18),
-                          label: const Text('Deshacer cobro'),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+                  accionPrincipal,
+                ],
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
+    );
+  }
+}
+
+/// Línea de detalle con ícono a la izquierda y texto que se ajusta
+/// (hasta [maxLineas]) sin desbordar.
+class _LineaDetalle extends StatelessWidget {
+  final IconData icono;
+  final String texto;
+  final TextStyle? estilo;
+  final int maxLineas;
+
+  const _LineaDetalle({
+    required this.icono,
+    required this.texto,
+    this.estilo,
+    this.maxLineas = 1,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icono, size: 16, color: estilo?.color),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            texto,
+            maxLines: maxLineas,
+            overflow: TextOverflow.ellipsis,
+            style: estilo,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -666,6 +826,8 @@ class _HistorialClienteSheet extends StatelessWidget {
             ),
             Text(
               'Historial de $nombreCliente',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 4),
@@ -683,32 +845,51 @@ class _HistorialClienteSheet extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final trabajo = historial[index];
                   final color = _colorEstado(trabajo.estado);
+                  final colorTexto = _colorTextoEstado(context, trabajo.estado);
                   return Card(
                     margin: const EdgeInsets.only(bottom: 8),
                     child: ListTile(
                       leading: CircleAvatar(
                         backgroundColor: color.withValues(alpha: 0.2),
-                        child: Icon(Icons.work_outline, color: color),
+                        child: Icon(Icons.work_outline, color: colorTexto),
                       ),
                       title: Text(formatearFecha(trabajo.fecha)),
                       subtitle: Text(
                         trabajo.servicioNombre.isNotEmpty
                             ? '${trabajo.servicioNombre} • ${trabajo.lugar}'
                             : trabajo.lugar,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            '\$${trabajo.precio.toStringAsFixed(2)}',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            trabajo.estado.label,
-                            style: TextStyle(color: color, fontSize: 12),
-                          ),
-                        ],
+                      // Ancho máximo para que el trailing no le quite
+                      // todo el espacio al título/subtítulo.
+                      trailing: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 110),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                '\$${trabajo.precio.toStringAsFixed(2)}',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Text(
+                              trabajo.estado.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colorTexto,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );
@@ -1009,6 +1190,7 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
                               builder: (context, _) {
                                 final catalogo = widget.serviceCatalog.servicios;
                                 return DropdownButtonFormField<String?>(
+                                  isExpanded: true,
                                   initialValue: fila.servicioId,
                                   decoration: const InputDecoration(
                                     labelText: 'Servicio',
@@ -1021,7 +1203,10 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
                                     ...catalogo.map(
                                       (s) => DropdownMenuItem<String?>(
                                         value: s.id,
-                                        child: Text(s.nombre),
+                                        child: Text(
+                                          s.nombre,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -1045,6 +1230,9 @@ class _CustomerFormSheetState extends State<_CustomerFormSheet> {
                       ),
                       const SizedBox(height: 8),
                       Row(
+                        // start: si un campo muestra su mensaje de error,
+                        // el otro no se desalinea ni se descuadra.
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (esPersonalizado) ...[
                             Expanded(

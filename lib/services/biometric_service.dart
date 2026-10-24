@@ -52,15 +52,26 @@ class BiometricService {
     }
   }
 
-  /// El teléfono soporta autenticación local y tiene huella o rostro
-  /// registrado.
+  /// El teléfono puede verificar la identidad del usuario (huella,
+  /// rostro o, como respaldo, el PIN/patrón de la pantalla de bloqueo).
+  /// Si devuelve false, [ultimoError] explica el motivo.
+  ///
+  /// No se exige que haya una huella o rostro registrado: algunos
+  /// teléfonos reportan una lista vacía de biometrías aunque sí tengan
+  /// una, y con el PIN como respaldo el candado funciona igual.
   Future<bool> disponible() async {
+    ultimoError = null;
     try {
-      if (!await _auth.isDeviceSupported()) return false;
-      final tipos = await _auth.getAvailableBiometrics();
-      return tipos.isNotEmpty;
+      final soportado = await _auth.isDeviceSupported();
+      if (!soportado) {
+        ultimoError =
+            'Este teléfono no tiene huella, rostro ni bloqueo de pantalla '
+            'configurado. Configúralo en los ajustes del teléfono.';
+      }
+      return soportado;
     } catch (e) {
       debugPrint('Error comprobando biometría: $e');
+      ultimoError = 'No se pudo consultar la biometría del teléfono: $e';
       return false;
     }
   }
@@ -83,12 +94,18 @@ class BiometricService {
         ultimoError =
             'Demasiados intentos fallidos. Desbloquea con el PIN del '
             'teléfono o inicia sesión con tu contraseña.';
+      } else {
+        // Cancelar el diálogo no es un error: solo se informa el resto.
+        final codigo = e.code.toString().split('.').last;
+        if (codigo != 'userCanceled' && codigo != 'systemCanceled') {
+          ultimoError = 'No se pudo verificar tu identidad ($codigo).';
+        }
       }
       return false;
     } catch (e) {
       debugPrint('Error inesperado en la autenticación local: $e');
       ultimoError =
-          'No se pudo usar la verificación biométrica en este teléfono.';
+          'No se pudo usar la verificación biométrica en este teléfono: $e';
       return false;
     } finally {
       ocupado = false;

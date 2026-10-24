@@ -328,6 +328,10 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
 /// primero la huella/rostro, así se confirma que el teléfono realmente
 /// lo tiene configurado y que quien lo activa es el dueño. Cambia al
 /// momento: no depende del botón "Guardar" del formulario.
+///
+/// El interruptor siempre se puede tocar: si el teléfono no puede
+/// verificar la identidad, se muestra el motivo en vez de quedarse
+/// inactivo sin explicación.
 class _BiometricSwitchTile extends StatefulWidget {
   const _BiometricSwitchTile();
 
@@ -353,19 +357,29 @@ class _BiometricSwitchTileState extends State<_BiometricSwitchTile> {
     if (mounted) setState(() => _disponible = disponible);
   }
 
+  void _avisar(String mensaje) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(mensaje), duration: const Duration(seconds: 6)),
+    );
+  }
+
   Future<void> _cambiar(bool activar) async {
     setState(() => _trabajando = true);
 
     if (activar) {
-      final ok = await _bio.autenticar(
-        'Confirma tu identidad para activar el acceso biométrico',
-      );
-      if (ok) {
-        await _bio.activar();
-      } else if (mounted && _bio.ultimoError != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_bio.ultimoError!)),
+      if (!await _bio.disponible()) {
+        _avisar(_bio.ultimoError ??
+            'Este teléfono no puede verificar tu identidad.');
+      } else {
+        final ok = await _bio.autenticar(
+          'Confirma tu identidad para activar el acceso biométrico',
         );
+        if (ok) {
+          await _bio.activar();
+        } else if (_bio.ultimoError != null) {
+          _avisar(_bio.ultimoError!);
+        }
       }
     } else {
       await _bio.desactivar();
@@ -381,19 +395,17 @@ class _BiometricSwitchTileState extends State<_BiometricSwitchTile> {
 
   @override
   Widget build(BuildContext context) {
-    final noDisponible = _disponible == false;
-
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
       secondary: const Icon(Icons.fingerprint),
       title: const Text('Acceso con huella o rostro'),
       subtitle: Text(
-        noDisponible
-            ? 'Este teléfono no tiene huella o rostro configurado.'
+        _disponible == false
+            ? 'No disponible. Toca el interruptor para ver el motivo.'
             : 'Pide tu huella o rostro al abrir la app.',
       ),
       value: _activada,
-      onChanged: (_disponible != true || _trabajando) ? null : _cambiar,
+      onChanged: _trabajando ? null : _cambiar,
     );
   }
 }

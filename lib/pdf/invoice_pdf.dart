@@ -55,13 +55,15 @@ class InvoicePdf {
     };
 
     doc.addPage(
-      pw.Page(
+      // MultiPage (en vez de Page): con varios servicios la tabla puede
+      // crecer y, si no cabe en una hoja, continúa en la siguiente en
+      // lugar de lanzar un error.
+      pw.MultiPage(
         pageFormat: PdfPageFormat.letter,
         margin: const pw.EdgeInsets.all(32),
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
         build: (context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
+          return [
               pw.Center(
                 child: pw.Text(
                   'FACTURA DE SERVICIO – '
@@ -124,14 +126,28 @@ class InvoicePdf {
                       _celda('Subtotal', negrita: true, color: PdfColors.white),
                     ],
                   ),
-                  pw.TableRow(
-                    children: [
-                      _celda(cliente.servicioNombre.isNotEmpty ? cliente.servicioNombre : 'Servicio'),
-                      _celda('1'),
-                      _celda('\$${cliente.precio.toStringAsFixed(2)}'),
-                      _celda('\$${cliente.precio.toStringAsFixed(2)}'),
-                    ],
-                  ),
+                  // Una fila por cada servicio del trabajo, con su propio
+                  // precio. Si por alguna razón no hay servicios (trabajos
+                  // muy antiguos), se muestra una sola fila con el total.
+                  if (cliente.servicios.isEmpty)
+                    pw.TableRow(
+                      children: [
+                        _celda('Servicio'),
+                        _celda('1'),
+                        _celda('\$${cliente.precio.toStringAsFixed(2)}'),
+                        _celda('\$${cliente.precio.toStringAsFixed(2)}'),
+                      ],
+                    )
+                  else
+                    for (final servicio in cliente.servicios)
+                      pw.TableRow(
+                        children: [
+                          _celda(servicio.nombre.isNotEmpty ? servicio.nombre : 'Servicio'),
+                          _celda('1'),
+                          _celda('\$${servicio.precio.toStringAsFixed(2)}'),
+                          _celda('\$${servicio.precio.toStringAsFixed(2)}'),
+                        ],
+                      ),
                 ],
               ),
               pw.SizedBox(height: 18),
@@ -160,6 +176,12 @@ class InvoicePdf {
               ),
               pw.SizedBox(height: 4),
               pw.Text(notaEstado, style: const pw.TextStyle(fontSize: 10.5)),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                'Este documento no es una factura fiscal y no tiene validez '
+                'tributaria; es únicamente un comprobante del servicio prestado.',
+                style: pw.TextStyle(fontSize: 10.5, fontWeight: pw.FontWeight.bold),
+              ),
               pw.SizedBox(height: 26),
               pw.Text(
                 'Firma del Operador',
@@ -169,8 +191,7 @@ class InvoicePdf {
               pw.Text('Nombre: ${perfil.operador}', style: const pw.TextStyle(fontSize: 10.5)),
               pw.SizedBox(height: 20),
               pw.Text('Firma: ___________________________', style: const pw.TextStyle(fontSize: 10.5)),
-            ],
-          );
+          ];
         },
       ),
     );

@@ -6,6 +6,7 @@ import '../services/business_profile_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/business_logo.dart';
 import '../widgets/theme_toggle_button.dart';
+import 'terms_screen.dart';
 
 /// Una opción de color de marca dentro de la paleta que se ofrece en
 /// esta pantalla.
@@ -276,6 +277,15 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
               const Divider(),
               const SizedBox(height: 16),
               Text(
+                'Legal',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              const _TerminosTile(),
+              const SizedBox(height: 8),
+              const Divider(),
+              const SizedBox(height: 16),
+              Text(
                 'Estos datos aparecen en el encabezado de cada factura que generes.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
@@ -406,6 +416,49 @@ class _BiometricSwitchTileState extends State<_BiometricSwitchTile> {
       ),
       value: _activada,
       onChanged: _trabajando ? null : _cambiar,
+    );
+  }
+}
+
+/// Acceso a los Términos y Condiciones y a la Política de Privacidad
+/// desde Mi negocio. Muestra si la cuenta ya aceptó las versiones
+/// vigentes; desde la pantalla se pueden leer y, si falta, aceptar.
+class _TerminosTile extends StatefulWidget {
+  const _TerminosTile();
+
+  @override
+  State<_TerminosTile> createState() => _TerminosTileState();
+}
+
+class _TerminosTileState extends State<_TerminosTile> {
+  Future<void> _abrir() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const TermsScreen()),
+    );
+    // Al volver, refresca el estado por si se aceptaron.
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final aceptacion = AceptacionTerminos.delUsuarioActual();
+
+    final String subtitulo;
+    if (aceptacion.fecha == null) {
+      subtitulo = 'Toca para leerlos y aceptarlos';
+    } else if (!aceptacion.vigente) {
+      subtitulo = 'Hay versiones nuevas pendientes de aceptar';
+    } else {
+      subtitulo = 'Aceptados el ${aceptacion.fechaTexto}';
+    }
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.description_outlined),
+      title: const Text('Términos y Política de Privacidad'),
+      subtitle: Text(subtitulo),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: _abrir,
     );
   }
 }

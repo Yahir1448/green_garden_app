@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/brand_cache.dart';
 import '../theme/app_theme.dart';
 import '../widgets/business_logo.dart';
+import 'terms_screen.dart';
 
 /// Indica que el usuario está en pleno proceso de recuperar su
 /// contraseña.
@@ -77,6 +78,25 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _enviar() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Crear cuenta exige aceptar los Términos y Condiciones: se muestra
+    // el texto completo con "Rechazar" / "Aceptar". Si se rechaza (o se
+    // vuelve atrás), no se llama a Supabase y la cuenta no se crea.
+    if (_esRegistro) {
+      final aceptado = await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (_) => const TermsScreen(modo: ModoTerminos.decision),
+        ),
+      );
+      if (!mounted) return;
+      if (aceptado != true) {
+        setState(() {
+          _error = 'Para crear una cuenta es necesario aceptar los '
+              'Términos y Condiciones y la Política de Privacidad.';
+        });
+        return;
+      }
+    }
+
     setState(() {
       _cargando = true;
       _error = null;
@@ -90,6 +110,9 @@ class _AuthScreenState extends State<AuthScreen> {
         await Supabase.instance.client.auth.signUp(
           email: email,
           password: password,
+          // Queda registrado en la cuenta qué versión de los términos se
+          // aceptó y cuándo.
+          data: metadatosAceptacion(),
         );
 
         if (mounted) {
@@ -124,6 +147,13 @@ class _AuthScreenState extends State<AuthScreen> {
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
+  }
+
+  /// Abre los términos en modo lectura (desde el formulario de registro).
+  void _verTerminos() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const TermsScreen()),
+    );
   }
 
   // ---------------------------------------------------------------
@@ -368,6 +398,19 @@ class _AuthScreenState extends State<AuthScreen> {
           return null;
         },
       ),
+      if (_esRegistro) ...[
+        const SizedBox(height: 12),
+        Text(
+          'Al crear tu cuenta se te pedirá aceptar los Términos y '
+          'Condiciones y la Política de Privacidad.',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        TextButton(
+          onPressed: _cargando ? null : _verTerminos,
+          child: const Text('Leer Términos y Política de Privacidad'),
+        ),
+      ],
       ..._errorWidgets(),
       const SizedBox(height: 24),
       FilledButton(

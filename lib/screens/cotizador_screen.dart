@@ -259,6 +259,7 @@ class _FilaCotizacion {
   final TextEditingController kmCtrl;
   final TextEditingController manoObraManualCtrl;
   final TextEditingController insumosCtrl;
+  final TextEditingController ayudantesCtrl;
 
   _FilaCotizacion({
     this.tarifaId,
@@ -266,12 +267,14 @@ class _FilaCotizacion {
     String m2Inicial = '',
     String kmInicial = '',
     String manoObraManualInicial = '',
-    String insumosInicial = '0',
+    String insumosInicial = '',
+    String ayudantesInicial = '',
   })  : nombreCtrl = TextEditingController(text: nombreInicial),
         m2Ctrl = TextEditingController(text: m2Inicial),
         kmCtrl = TextEditingController(text: kmInicial),
         manoObraManualCtrl = TextEditingController(text: manoObraManualInicial),
-        insumosCtrl = TextEditingController(text: insumosInicial);
+        insumosCtrl = TextEditingController(text: insumosInicial),
+        ayudantesCtrl = TextEditingController(text: ayudantesInicial);
 
   void dispose() {
     nombreCtrl.dispose();
@@ -279,6 +282,7 @@ class _FilaCotizacion {
     kmCtrl.dispose();
     manoObraManualCtrl.dispose();
     insumosCtrl.dispose();
+    ayudantesCtrl.dispose();
   }
 }
 
@@ -348,7 +352,8 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     String m2Inicial = '',
     String kmInicial = '',
     String manoObraManualInicial = '',
-    String insumosInicial = '0',
+    String insumosInicial = '',
+    String ayudantesInicial = '',
   }) {
     final fila = _FilaCotizacion(
       tarifaId: tarifaId,
@@ -357,8 +362,15 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
       kmInicial: kmInicial,
       manoObraManualInicial: manoObraManualInicial,
       insumosInicial: insumosInicial,
+      ayudantesInicial: ayudantesInicial,
     );
-    for (final ctrl in [fila.m2Ctrl, fila.kmCtrl, fila.manoObraManualCtrl, fila.insumosCtrl]) {
+    for (final ctrl in [
+      fila.m2Ctrl,
+      fila.kmCtrl,
+      fila.manoObraManualCtrl,
+      fila.insumosCtrl,
+      fila.ayudantesCtrl,
+    ]) {
       ctrl.addListener(_onCambio);
     }
     setState(() => _filas.add(fila));
@@ -387,19 +399,21 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     });
   }
 
-  /// Costo de mano de obra + transporte + insumos de una fila (sin
-  /// margen todavía).
+  /// Costo de mano de obra + transporte + insumos + ayudantes
+  /// contratados de una fila (sin margen todavía).
   double _subtotalDeFila(_FilaCotizacion fila) {
     final insumos = double.tryParse(fila.insumosCtrl.text.trim()) ?? 0;
+    final ayudantes = double.tryParse(fila.ayudantesCtrl.text.trim()) ?? 0;
+    final extras = insumos + ayudantes;
     if (fila.tarifaId != null) {
       final tarifa = widget.tarifaService.buscarPorId(fila.tarifaId);
-      if (tarifa == null) return insumos;
+      if (tarifa == null) return extras;
       final m2 = double.tryParse(fila.m2Ctrl.text.trim()) ?? 0;
       final km = double.tryParse(fila.kmCtrl.text.trim()) ?? 0;
-      return tarifa.calcularCosto(m2: m2, km: km) + insumos;
+      return tarifa.calcularCosto(m2: m2, km: km) + extras;
     }
     final manual = double.tryParse(fila.manoObraManualCtrl.text.trim()) ?? 0;
-    return manual + insumos;
+    return manual + extras;
   }
 
   double get _costoTotal =>
@@ -440,8 +454,11 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
         m2Inicial: linea.m2 > 0 ? linea.m2.toString() : '',
         kmInicial: linea.km > 0 ? linea.km.toString() : '',
         manoObraManualInicial:
-            tarifaVigente == null ? (linea.precio - linea.costoInsumos).toString() : '',
-        insumosInicial: linea.costoInsumos.toString(),
+            tarifaVigente == null
+                ? (linea.precio - linea.costoInsumos - linea.costoAyudantes).toString()
+                : '',
+        insumosInicial: linea.costoInsumos > 0 ? linea.costoInsumos.toString() : '',
+        ayudantesInicial: linea.costoAyudantes > 0 ? linea.costoAyudantes.toString() : '',
       );
     }
     if (_filas.isEmpty) _agregarFila();
@@ -457,6 +474,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
         m2: tarifa != null ? (double.tryParse(fila.m2Ctrl.text.trim()) ?? 0) : 0,
         km: tarifa != null ? (double.tryParse(fila.kmCtrl.text.trim()) ?? 0) : 0,
         costoInsumos: double.tryParse(fila.insumosCtrl.text.trim()) ?? 0,
+        costoAyudantes: double.tryParse(fila.ayudantesCtrl.text.trim()) ?? 0,
         precio: _subtotalDeFila(fila),
       );
     }).toList();
@@ -635,13 +653,13 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
             TextFormField(
               controller: _nombreClienteCtrl,
               decoration: const InputDecoration(
-                labelText: 'Nombre del cliente (opcional, tentativo)',
+                labelText: 'Nombre del cliente (opcional)',
               ),
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _lugarCtrl,
-              decoration: const InputDecoration(labelText: 'Lugar (opcional, tentativo)'),
+              decoration: const InputDecoration(labelText: 'Lugar (opcional)'),
             ),
             const SizedBox(height: 20),
             Text('Servicios a cotizar', style: Theme.of(context).textTheme.titleMedium),
@@ -668,11 +686,11 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                                 return DropdownButtonFormField<String?>(
                                   initialValue: fila.tarifaId,
                                   decoration:
-                                      const InputDecoration(labelText: 'Servicio / tarifa'),
+                                      const InputDecoration(labelText: 'Servicio'),
                                   items: [
                                     const DropdownMenuItem<String?>(
                                       value: null,
-                                      child: Text('Personalizado (sin tarifa)'),
+                                      child: Text('Otro servicio (precio manual)'),
                                     ),
                                     ...tarifas.map(
                                       (t) => DropdownMenuItem<String?>(
@@ -712,7 +730,8 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                           controller: fila.manoObraManualCtrl,
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
                           decoration: const InputDecoration(
-                            labelText: 'Mano de obra + transporte',
+                            labelText: 'Mano de obra y transporte',
+                            helperText: 'Lo que cobras por el trabajo, sin contar insumos.',
                             prefixText: '\$ ',
                           ),
                           validator: (value) {
@@ -747,11 +766,9 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                                 controller: fila.kmCtrl,
                                 keyboardType:
                                     const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(labelText: 'Distancia (km)'),
+                                decoration: const InputDecoration(labelText: 'Km (opcional)'),
                                 validator: (value) {
-                                  if (value == null || value.trim().isEmpty) {
-                                    return 'Requerido';
-                                  }
+                                  if (value == null || value.trim().isEmpty) return null;
                                   if (double.tryParse(value.trim()) == null) {
                                     return 'Inválido';
                                   }
@@ -767,11 +784,26 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                         controller: fila.insumosCtrl,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: const InputDecoration(
-                          labelText: 'Costo de insumos',
+                          labelText: 'Costo de insumos (opcional)',
                           prefixText: '\$ ',
                         ),
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Requerido';
+                          if (value == null || value.trim().isEmpty) return null;
+                          if (double.tryParse(value.trim()) == null) return 'Inválido';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: fila.ayudantesCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Ayudantes contratados (opcional)',
+                          helperText: 'Lo que pagarás a personal extra por este trabajo.',
+                          prefixText: '\$ ',
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) return null;
                           if (double.tryParse(value.trim()) == null) return 'Inválido';
                           return null;
                         },
@@ -780,7 +812,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: Text(
-                          'Subtotal: \$${subtotal.toStringAsFixed(2)}',
+                          'Costo de este servicio: \$${subtotal.toStringAsFixed(2)}',
                           style: Theme.of(context)
                               .textTheme
                               .bodyMedium
@@ -805,9 +837,9 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
               controller: _margenCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
-                labelText: 'Margen de rentabilidad deseado',
+                labelText: 'Ganancia deseada',
                 suffixText: '%',
-                helperText: 'Se aplica sobre el precio final, no sobre el costo.',
+                helperText: 'Ej. 30 = de cada \$100 que cobras, \$30 son tu ganancia.',
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) return 'Requerido';
@@ -851,34 +883,6 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
               ),
             ),
             const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: _guardando ? null : _guardar,
-              icon: _guardando
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
-              label: Text(
-                _cotizacionIdActual != null
-                    ? 'Actualizar cotización guardada'
-                    : 'Guardar cotización',
-              ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _compartiendo ? null : _compartirCotizacion,
-              icon: _compartiendo
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.share),
-              label: const Text('Compartir cotización'),
-            ),
-            const SizedBox(height: 8),
             FilledButton.icon(
               onPressed: _agendando ? null : _agendar,
               icon: _agendando
@@ -889,6 +893,38 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                     )
                   : const Icon(Icons.event_available),
               label: const Text('Agendar con esta cotización'),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _guardando ? null : _guardar,
+                    icon: _guardando
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_outlined),
+                    label: Text(_cotizacionIdActual != null ? 'Actualizar' : 'Guardar'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _compartiendo ? null : _compartirCotizacion,
+                    icon: _compartiendo
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.share),
+                    label: const Text('Compartir'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

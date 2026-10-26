@@ -14,8 +14,13 @@ class ServicioCotizado {
   double km;
   double costoInsumos;
 
+  /// Lo que se pagará a ayudantes contratados para este servicio.
+  /// Ya está incluido en [precio]; se guarda aparte para poder
+  /// mostrarlo de nuevo al retomar la cotización.
+  double costoAyudantes;
+
   /// Precio total de esta línea: mano de obra + transporte (calculado
-  /// con la tarifa, o ingresado a mano) + insumos. NO incluye margen
+  /// con la tarifa, o ingresado a mano) + insumos + ayudantes. NO incluye margen
   /// de rentabilidad todavía; eso se aplica sobre el total de la
   /// cotización.
   double precio;
@@ -26,6 +31,7 @@ class ServicioCotizado {
     required this.m2,
     required this.km,
     required this.costoInsumos,
+    this.costoAyudantes = 0,
     required this.precio,
   });
 
@@ -36,6 +42,7 @@ class ServicioCotizado {
       'm2': m2,
       'km': km,
       'costo_insumos': costoInsumos,
+      'costo_ayudantes': costoAyudantes,
       'precio': precio,
     };
   }
@@ -47,6 +54,7 @@ class ServicioCotizado {
       m2: (map['m2'] as num?)?.toDouble() ?? 0,
       km: (map['km'] as num?)?.toDouble() ?? 0,
       costoInsumos: (map['costo_insumos'] as num?)?.toDouble() ?? 0,
+      costoAyudantes: (map['costo_ayudantes'] as num?)?.toDouble() ?? 0,
       precio: (map['precio'] as num?)?.toDouble() ?? 0,
     );
   }

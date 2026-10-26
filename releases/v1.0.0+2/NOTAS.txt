@@ -1,0 +1,4 @@
+VersiÃ³n:  1.0.0+2
+Fecha:    2026-10-26 18:08
+Commit:   398739a (con cambios sin guardar en git)
+Notas:    Agrega exportación de datos

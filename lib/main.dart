@@ -11,6 +11,7 @@ import 'screens/biometric_lock_screen.dart';
 import 'screens/business_profile_screen.dart';
 import 'screens/cotizador_screen.dart';
 import 'screens/customer_screen.dart';
+import 'screens/export_data_screen.dart';
 import 'screens/finance_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/services_screen.dart';
@@ -457,6 +458,16 @@ class HomePage extends StatelessWidget {
                 MaterialPageRoute(
                   builder: (_) => BusinessProfileScreen(service: businessProfileService),
                 ),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Exportar mis datos',
+            icon: const Icon(Icons.download_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ExportDataScreen()),
               );
             },
           ),

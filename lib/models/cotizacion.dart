@@ -14,13 +14,18 @@ class ServicioCotizado {
   double km;
   double costoInsumos;
 
-  /// Lo que se pagará a ayudantes contratados para este servicio.
-  /// Ya está incluido en [precio]; se guarda aparte para poder
-  /// mostrarlo de nuevo al retomar la cotización.
+  /// Parte del precio que corresponde al costo por distancia (los km
+  /// que se pasan del radio base de la tarifa). Ya está incluido en
+  /// [precio]; se guarda aparte para poder desglosarlo en el PDF.
+  double costoDistancia;
+
+  /// Solo lectura: para cotizaciones guardadas con una versión anterior,
+  /// donde el pago de ayudantes iba dentro del servicio. Ahora los
+  /// ayudantes se guardan aparte (ver [AyudanteCotizado]).
   double costoAyudantes;
 
   /// Precio total de esta línea: mano de obra + transporte (calculado
-  /// con la tarifa, o ingresado a mano) + insumos + ayudantes. NO incluye margen
+  /// con la tarifa, o ingresado a mano) + insumos. NO incluye margen
   /// de rentabilidad todavía; eso se aplica sobre el total de la
   /// cotización.
   double precio;
@@ -31,6 +36,7 @@ class ServicioCotizado {
     required this.m2,
     required this.km,
     required this.costoInsumos,
+    this.costoDistancia = 0,
     this.costoAyudantes = 0,
     required this.precio,
   });
@@ -42,7 +48,7 @@ class ServicioCotizado {
       'm2': m2,
       'km': km,
       'costo_insumos': costoInsumos,
-      'costo_ayudantes': costoAyudantes,
+      'costo_distancia': costoDistancia,
       'precio': precio,
     };
   }
@@ -54,8 +60,36 @@ class ServicioCotizado {
       m2: (map['m2'] as num?)?.toDouble() ?? 0,
       km: (map['km'] as num?)?.toDouble() ?? 0,
       costoInsumos: (map['costo_insumos'] as num?)?.toDouble() ?? 0,
+      costoDistancia: (map['costo_distancia'] as num?)?.toDouble() ?? 0,
       costoAyudantes: (map['costo_ayudantes'] as num?)?.toDouble() ?? 0,
       precio: (map['precio'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+/// Un ayudante que se contrata para el trabajo (personal extra). Va aparte
+/// de los servicios: tiene su propio costo y aparece por separado en la
+/// cotización. Se guarda dentro de la misma columna `lineas` de la
+/// cotización, marcado con `tipo: ayudante`, así que no necesita ninguna
+/// columna nueva en la base de datos.
+class AyudanteCotizado {
+  String descripcion;
+  double costo;
+
+  AyudanteCotizado({required this.descripcion, required this.costo});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'tipo': 'ayudante',
+      'descripcion': descripcion,
+      'costo': costo,
+    };
+  }
+
+  factory AyudanteCotizado.fromMap(Map<String, dynamic> map) {
+    return AyudanteCotizado(
+      descripcion: map['descripcion'] as String? ?? 'Ayudante',
+      costo: (map['costo'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -87,10 +121,14 @@ class Cotizacion {
   String lugar;
   List<ServicioCotizado> servicios;
 
+  /// Ayudantes contratados para el trabajo (aparte de los servicios).
+  List<AyudanteCotizado> ayudantes;
+
   /// % de rentabilidad deseado sobre el precio final (ej. 30 = 30%).
   double margenRentabilidad;
 
-  /// Suma de los precios de [servicios], SIN margen aplicado.
+  /// Suma de los precios de [servicios] más el pago de [ayudantes], SIN
+  /// margen aplicado.
   double costoTotal;
 
   /// Precio final ya con el margen de rentabilidad aplicado; es el
@@ -105,18 +143,23 @@ class Cotizacion {
     this.nombreCliente = '',
     this.lugar = '',
     List<ServicioCotizado>? servicios,
+    List<AyudanteCotizado>? ayudantes,
     this.margenRentabilidad = 0,
     required this.costoTotal,
     required this.precioTotal,
     this.estado = EstadoCotizacion.pendiente,
     required this.creadaEn,
-  }) : servicios = servicios ?? [];
+  })  : servicios = servicios ?? [],
+        ayudantes = ayudantes ?? [];
 
   Map<String, dynamic> toMap() {
     return {
       'nombre_cliente': nombreCliente,
       'lugar': lugar,
-      'lineas': servicios.map((s) => s.toMap()).toList(),
+      'lineas': [
+        ...servicios.map((s) => s.toMap()),
+        ...ayudantes.map((a) => a.toMap()),
+      ],
       'margen_rentabilidad': margenRentabilidad,
       'costo_total': costoTotal,
       'precio_total': precioTotal,
@@ -125,12 +168,20 @@ class Cotizacion {
   }
 
   factory Cotizacion.fromMap(Map<String, dynamic> map) {
+    final lineas = ((map['lineas'] as List?) ?? [])
+        .map((item) => item as Map<String, dynamic>)
+        .toList();
     return Cotizacion(
       id: map['id'] as String,
       nombreCliente: map['nombre_cliente'] as String? ?? '',
       lugar: map['lugar'] as String? ?? '',
-      servicios: ((map['lineas'] as List?) ?? [])
-          .map((item) => ServicioCotizado.fromMap(item as Map<String, dynamic>))
+      servicios: lineas
+          .where((l) => l['tipo'] != 'ayudante')
+          .map(ServicioCotizado.fromMap)
+          .toList(),
+      ayudantes: lineas
+          .where((l) => l['tipo'] == 'ayudante')
+          .map(AyudanteCotizado.fromMap)
           .toList(),
       margenRentabilidad: (map['margen_rentabilidad'] as num?)?.toDouble() ?? 0,
       costoTotal: (map['costo_total'] as num?)?.toDouble() ?? 0,

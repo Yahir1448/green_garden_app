@@ -259,7 +259,6 @@ class _FilaCotizacion {
   final TextEditingController kmCtrl;
   final TextEditingController manoObraManualCtrl;
   final TextEditingController insumosCtrl;
-  final TextEditingController ayudantesCtrl;
 
   _FilaCotizacion({
     this.tarifaId,
@@ -268,13 +267,11 @@ class _FilaCotizacion {
     String kmInicial = '',
     String manoObraManualInicial = '',
     String insumosInicial = '',
-    String ayudantesInicial = '',
   })  : nombreCtrl = TextEditingController(text: nombreInicial),
         m2Ctrl = TextEditingController(text: m2Inicial),
         kmCtrl = TextEditingController(text: kmInicial),
         manoObraManualCtrl = TextEditingController(text: manoObraManualInicial),
-        insumosCtrl = TextEditingController(text: insumosInicial),
-        ayudantesCtrl = TextEditingController(text: ayudantesInicial);
+        insumosCtrl = TextEditingController(text: insumosInicial);
 
   void dispose() {
     nombreCtrl.dispose();
@@ -282,7 +279,21 @@ class _FilaCotizacion {
     kmCtrl.dispose();
     manoObraManualCtrl.dispose();
     insumosCtrl.dispose();
-    ayudantesCtrl.dispose();
+  }
+}
+
+/// Un ayudante contratado para el trabajo. Va aparte de los servicios.
+class _FilaAyudante {
+  final TextEditingController descripcionCtrl;
+  final TextEditingController costoCtrl;
+
+  _FilaAyudante({String descripcionInicial = '', String costoInicial = ''})
+      : descripcionCtrl = TextEditingController(text: descripcionInicial),
+        costoCtrl = TextEditingController(text: costoInicial);
+
+  void dispose() {
+    descripcionCtrl.dispose();
+    costoCtrl.dispose();
   }
 }
 
@@ -322,6 +333,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
   final TextEditingController _lugarCtrl = TextEditingController();
   final TextEditingController _margenCtrl = TextEditingController(text: '30');
   final List<_FilaCotizacion> _filas = [];
+  final List<_FilaAyudante> _ayudantes = [];
   String? _cotizacionIdActual;
   bool _guardando = false;
   bool _agendando = false;
@@ -341,6 +353,9 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     for (final fila in _filas) {
       fila.dispose();
     }
+    for (final ayudante in _ayudantes) {
+      ayudante.dispose();
+    }
     super.dispose();
   }
 
@@ -353,7 +368,6 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     String kmInicial = '',
     String manoObraManualInicial = '',
     String insumosInicial = '',
-    String ayudantesInicial = '',
   }) {
     final fila = _FilaCotizacion(
       tarifaId: tarifaId,
@@ -362,14 +376,12 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
       kmInicial: kmInicial,
       manoObraManualInicial: manoObraManualInicial,
       insumosInicial: insumosInicial,
-      ayudantesInicial: ayudantesInicial,
     );
     for (final ctrl in [
       fila.m2Ctrl,
       fila.kmCtrl,
       fila.manoObraManualCtrl,
       fila.insumosCtrl,
-      fila.ayudantesCtrl,
     ]) {
       ctrl.addListener(_onCambio);
     }
@@ -381,6 +393,19 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     setState(() {
       final fila = _filas.removeAt(index);
       fila.dispose();
+    });
+  }
+
+  void _agregarAyudante({String descripcion = '', String costo = ''}) {
+    final ayudante = _FilaAyudante(descripcionInicial: descripcion, costoInicial: costo);
+    ayudante.costoCtrl.addListener(_onCambio);
+    setState(() => _ayudantes.add(ayudante));
+  }
+
+  void _eliminarAyudante(int index) {
+    setState(() {
+      final ayudante = _ayudantes.removeAt(index);
+      ayudante.dispose();
     });
   }
 
@@ -399,25 +424,41 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     });
   }
 
-  /// Costo de mano de obra + transporte + insumos + ayudantes
-  /// contratados de una fila (sin margen todavía).
+  /// Costo de mano de obra + transporte + insumos de una fila (sin
+  /// margen todavía).
   double _subtotalDeFila(_FilaCotizacion fila) {
     final insumos = double.tryParse(fila.insumosCtrl.text.trim()) ?? 0;
-    final ayudantes = double.tryParse(fila.ayudantesCtrl.text.trim()) ?? 0;
-    final extras = insumos + ayudantes;
     if (fila.tarifaId != null) {
       final tarifa = widget.tarifaService.buscarPorId(fila.tarifaId);
-      if (tarifa == null) return extras;
+      if (tarifa == null) return insumos;
       final m2 = double.tryParse(fila.m2Ctrl.text.trim()) ?? 0;
       final km = double.tryParse(fila.kmCtrl.text.trim()) ?? 0;
-      return tarifa.calcularCosto(m2: m2, km: km) + extras;
+      return tarifa.calcularCosto(m2: m2, km: km) + insumos;
     }
     final manual = double.tryParse(fila.manoObraManualCtrl.text.trim()) ?? 0;
-    return manual + extras;
+    return manual + insumos;
   }
 
+  /// Parte del costo de una fila que corresponde a la distancia: los km
+  /// que se pasan del radio base de la tarifa, por su precio por km extra.
+  double _distanciaDeFila(_FilaCotizacion fila) {
+    if (fila.tarifaId == null) return 0;
+    final tarifa = widget.tarifaService.buscarPorId(fila.tarifaId);
+    if (tarifa == null) return 0;
+    final km = double.tryParse(fila.kmCtrl.text.trim()) ?? 0;
+    return km > tarifa.kmBase ? (km - tarifa.kmBase) * tarifa.precioPorKmExtra : 0;
+  }
+
+  /// Suma de lo que se pagará a los ayudantes.
+  double get _costoAyudantes => _ayudantes.fold<double>(
+        0,
+        (suma, a) => suma + (double.tryParse(a.costoCtrl.text.trim()) ?? 0),
+      );
+
+  /// Costo total: servicios + ayudantes (sin margen todavía).
   double get _costoTotal =>
-      _filas.fold<double>(0, (suma, fila) => suma + _subtotalDeFila(fila));
+      _filas.fold<double>(0, (suma, fila) => suma + _subtotalDeFila(fila)) +
+      _costoAyudantes;
 
   double get _margen => double.tryParse(_margenCtrl.text.trim()) ?? 0;
 
@@ -436,12 +477,16 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
     for (final fila in _filas) {
       fila.dispose();
     }
+    for (final ayudante in _ayudantes) {
+      ayudante.dispose();
+    }
     setState(() {
       _cotizacionIdActual = cotizacion.id;
       _nombreClienteCtrl.text = cotizacion.nombreCliente;
       _lugarCtrl.text = cotizacion.lugar;
       _margenCtrl.text = cotizacion.margenRentabilidad.toString();
       _filas.clear();
+      _ayudantes.clear();
     });
     for (final linea in cotizacion.servicios) {
       // Si la tarifa usada en su momento ya no existe (se borró desde
@@ -458,8 +503,23 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                 ? (linea.precio - linea.costoInsumos - linea.costoAyudantes).toString()
                 : '',
         insumosInicial: linea.costoInsumos > 0 ? linea.costoInsumos.toString() : '',
-        ayudantesInicial: linea.costoAyudantes > 0 ? linea.costoAyudantes.toString() : '',
       );
+    }
+    for (final ayudante in cotizacion.ayudantes) {
+      _agregarAyudante(
+        descripcion: ayudante.descripcion,
+        costo: ayudante.costo.toString(),
+      );
+    }
+    // Cotizaciones guardadas con una versión anterior, donde el pago del
+    // ayudante iba dentro del servicio: ahora aparece como ayudante aparte.
+    for (final linea in cotizacion.servicios) {
+      if (linea.costoAyudantes > 0) {
+        _agregarAyudante(
+          descripcion: 'Ayudante',
+          costo: linea.costoAyudantes.toString(),
+        );
+      }
     }
     if (_filas.isEmpty) _agregarFila();
   }
@@ -474,10 +534,25 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
         m2: tarifa != null ? (double.tryParse(fila.m2Ctrl.text.trim()) ?? 0) : 0,
         km: tarifa != null ? (double.tryParse(fila.kmCtrl.text.trim()) ?? 0) : 0,
         costoInsumos: double.tryParse(fila.insumosCtrl.text.trim()) ?? 0,
-        costoAyudantes: double.tryParse(fila.ayudantesCtrl.text.trim()) ?? 0,
+        costoDistancia: _distanciaDeFila(fila),
         precio: _subtotalDeFila(fila),
       );
     }).toList();
+  }
+
+  /// Ayudantes con pago mayor a cero (los renglones vacíos se ignoran).
+  List<AyudanteCotizado> _construirAyudantes() {
+    final lista = <AyudanteCotizado>[];
+    for (final a in _ayudantes) {
+      final costo = double.tryParse(a.costoCtrl.text.trim()) ?? 0;
+      if (costo <= 0) continue;
+      final descripcion = a.descripcionCtrl.text.trim();
+      lista.add(AyudanteCotizado(
+        descripcion: descripcion.isEmpty ? 'Ayudante' : descripcion,
+        costo: costo,
+      ));
+    }
+    return lista;
   }
 
   Future<void> _guardar() async {
@@ -494,6 +569,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
           margenRentabilidad: _margen,
           costoTotal: _costoTotal,
           precioTotal: _precioFinal,
+          ayudantes: _construirAyudantes(),
         );
       } else {
         final creada = await widget.cotizacionService.guardarCotizacion(
@@ -503,6 +579,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
           margenRentabilidad: _margen,
           costoTotal: _costoTotal,
           precioTotal: _precioFinal,
+          ayudantes: _construirAyudantes(),
         );
         _cotizacionIdActual = creada.id;
       }
@@ -527,9 +604,11 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
   /// agendado con el mismo desglose de servicios que se le cotizó.
   List<ServicioAgendado> _serviciosParaAgendar(List<ServicioCotizado> lineas) {
     if (lineas.isEmpty) return [];
-    final costoTotal = _costoTotal;
     final precioFinal = _precioFinal;
-    if (costoTotal <= 0) {
+    // Los ayudantes no son un servicio: su costo ya está dentro del precio
+    // final, así que se reparte entre los servicios según su peso.
+    final base = lineas.fold<double>(0, (suma, l) => suma + l.precio);
+    if (base <= 0) {
       final porLinea = precioFinal / lineas.length;
       return lineas
           .map((l) => ServicioAgendado(nombre: l.servicioNombre, precio: porLinea))
@@ -539,7 +618,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
         .map(
           (l) => ServicioAgendado(
             nombre: l.servicioNombre,
-            precio: (l.precio / costoTotal) * precioFinal,
+            precio: (l.precio / base) * precioFinal,
           ),
         )
         .toList();
@@ -556,16 +635,21 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
         nombreCliente: _nombreClienteCtrl.text.trim(),
         lugar: _lugarCtrl.text.trim(),
         servicios: lineas,
-        margenRentabilidad: _margen,
-        costoTotal: _costoTotal,
+        ayudantes: _construirAyudantes(),
         precioTotal: _precioFinal,
         perfil: widget.businessProfileService.perfil,
       );
+      final ahora = DateTime.now();
+      final fecha = '${ahora.year}-'
+          '${ahora.month.toString().padLeft(2, '0')}-'
+          '${ahora.day.toString().padLeft(2, '0')}_'
+          '${ahora.hour.toString().padLeft(2, '0')}'
+          '${ahora.minute.toString().padLeft(2, '0')}';
       // Abre el selector nativo de apps (WhatsApp, correo, etc.) con el
       // PDF de la cotización listo para enviar.
       await Printing.sharePdf(
         bytes: bytes,
-        filename: 'cotizacion_${DateTime.now().millisecondsSinceEpoch}.pdf',
+        filename: 'cotizacion_$fecha.pdf',
       );
     } catch (e) {
       if (mounted) {
@@ -595,6 +679,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
           margenRentabilidad: _margen,
           costoTotal: _costoTotal,
           precioTotal: _precioFinal,
+          ayudantes: _construirAyudantes(),
         );
         id = _cotizacionIdActual!;
       } else {
@@ -605,6 +690,7 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
           margenRentabilidad: _margen,
           costoTotal: _costoTotal,
           precioTotal: _precioFinal,
+          ayudantes: _construirAyudantes(),
         );
         id = creada.id;
         _cotizacionIdActual = id;
@@ -653,13 +739,17 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
             TextFormField(
               controller: _nombreClienteCtrl,
               decoration: const InputDecoration(
-                labelText: 'Nombre del cliente (opcional)',
+                labelText: 'Nombre del cliente',
+                helperText: 'Puedes dejarlo vacío y completarlo después.',
               ),
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _lugarCtrl,
-              decoration: const InputDecoration(labelText: 'Lugar (opcional)'),
+              decoration: const InputDecoration(
+                labelText: 'Lugar del trabajo',
+                helperText: 'Dirección o zona. Puedes completarla después.',
+              ),
             ),
             const SizedBox(height: 20),
             Text('Servicios a cotizar', style: Theme.of(context).textTheme.titleMedium),
@@ -741,42 +831,34 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                           },
                         ),
                       ] else ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: fila.m2Ctrl,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(labelText: 'Tamaño (m²)'),
-                                validator: (value) {
-                                  if (value == null || value.trim().isEmpty) {
-                                    return 'Requerido';
-                                  }
-                                  if (double.tryParse(value.trim()) == null) {
-                                    return 'Inválido';
-                                  }
-                                  return null;
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextFormField(
-                                controller: fila.kmCtrl,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(labelText: 'Km (opcional)'),
-                                validator: (value) {
-                                  if (value == null || value.trim().isEmpty) return null;
-                                  if (double.tryParse(value.trim()) == null) {
-                                    return 'Inválido';
-                                  }
-                                  return null;
-                                },
-                              ),
-                            ),
-                          ],
+                        TextFormField(
+                          controller: fila.m2Ctrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Área del terreno (m²)',
+                            helperText: 'Metros cuadrados que vas a trabajar.',
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) return 'Requerido';
+                            if (double.tryParse(value.trim()) == null) return 'Inválido';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: fila.kmCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Distancia hasta el cliente (km)',
+                            helperText:
+                                'Desde tu punto de salida. Si no hay traslado, déjalo vacío.',
+                            helperMaxLines: 2,
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) return null;
+                            if (double.tryParse(value.trim()) == null) return 'Inválido';
+                            return null;
+                          },
                         ),
                       ],
                       const SizedBox(height: 8),
@@ -784,22 +866,10 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                         controller: fila.insumosCtrl,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: const InputDecoration(
-                          labelText: 'Costo de insumos (opcional)',
-                          prefixText: '\$ ',
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) return null;
-                          if (double.tryParse(value.trim()) == null) return 'Inválido';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      TextFormField(
-                        controller: fila.ayudantesCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Ayudantes contratados (opcional)',
-                          helperText: 'Lo que pagarás a personal extra por este trabajo.',
+                          labelText: 'Costo de insumos',
+                          helperText:
+                              'Materiales que gastas en este servicio. Si no usas, déjalo vacío.',
+                          helperMaxLines: 2,
                           prefixText: '\$ ',
                         ),
                         validator: (value) {
@@ -830,6 +900,70 @@ class _CalculadoraFormState extends State<_CalculadoraForm> {
                 onPressed: () => _agregarFila(),
                 icon: const Icon(Icons.add),
                 label: const Text('Agregar otro servicio'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('Ayudantes', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 2),
+            Text(
+              'Personal extra que contratas para este trabajo. '
+              'Aparece por separado en la cotización.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            ..._ayudantes.asMap().entries.map((entry) {
+              final index = entry.key;
+              final ayudante = entry.value;
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: TextFormField(
+                          controller: ayudante.descripcionCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Nombre o tarea',
+                            helperText: 'Ej. Juan, ayudante de poda',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                          controller: ayudante.costoCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Pago',
+                            prefixText: '\$ ',
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) return null;
+                            if (double.tryParse(value.trim()) == null) return 'Inválido';
+                            return null;
+                          },
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline),
+                        tooltip: 'Quitar este ayudante',
+                        onPressed: () => _eliminarAyudante(index),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _agregarAyudante(),
+                icon: const Icon(Icons.add),
+                label: const Text('Agregar ayudante'),
               ),
             ),
             const SizedBox(height: 12),

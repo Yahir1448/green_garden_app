@@ -1,0 +1,5 @@
+VersiÃ³n:  1.0.0+3
+Fecha:    2026-10-27 20:59
+Commit:   3c88357 (con cambios sin guardar en git)
+Notas:    mejora la creacion de cotizaciones para clientes
+Fallaron: AAB

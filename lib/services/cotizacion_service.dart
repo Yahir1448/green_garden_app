@@ -46,6 +46,7 @@ class CotizacionService extends ChangeNotifier {
     required String nombreCliente,
     required String lugar,
     required List<ServicioCotizado> servicios,
+    List<AyudanteCotizado> ayudantes = const [],
     required double margenRentabilidad,
     required double costoTotal,
     required double precioTotal,
@@ -56,7 +57,10 @@ class CotizacionService extends ChangeNotifier {
           .insert({
             'nombre_cliente': nombreCliente,
             'lugar': lugar,
-            'lineas': servicios.map((s) => s.toMap()).toList(),
+            'lineas': [
+              ...servicios.map((s) => s.toMap()),
+              ...ayudantes.map((a) => a.toMap()),
+            ],
             'margen_rentabilidad': margenRentabilidad,
             'costo_total': costoTotal,
             'precio_total': precioTotal,
@@ -79,6 +83,7 @@ class CotizacionService extends ChangeNotifier {
     required String nombreCliente,
     required String lugar,
     required List<ServicioCotizado> servicios,
+    List<AyudanteCotizado> ayudantes = const [],
     required double margenRentabilidad,
     required double costoTotal,
     required double precioTotal,
@@ -87,7 +92,10 @@ class CotizacionService extends ChangeNotifier {
       await _client.from(_tabla).update({
         'nombre_cliente': nombreCliente,
         'lugar': lugar,
-        'lineas': servicios.map((s) => s.toMap()).toList(),
+        'lineas': [
+          ...servicios.map((s) => s.toMap()),
+          ...ayudantes.map((a) => a.toMap()),
+        ],
         'margen_rentabilidad': margenRentabilidad,
         'costo_total': costoTotal,
         'precio_total': precioTotal,
@@ -99,6 +107,7 @@ class CotizacionService extends ChangeNotifier {
         actual.nombreCliente = nombreCliente;
         actual.lugar = lugar;
         actual.servicios = servicios;
+        actual.ayudantes = ayudantes;
         actual.margenRentabilidad = margenRentabilidad;
         actual.costoTotal = costoTotal;
         actual.precioTotal = precioTotal;
